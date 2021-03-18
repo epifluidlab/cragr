@@ -1,0 +1,26 @@
+Package: cragr
+Title: R package for CRAG
+Version: 0.1.0
+Authors@R: 
+    person(given = "Haizi",
+           family = "Zheng",
+           role = c("aut", "cre"),
+           email = "haizi.zh@gmail.com",
+           comment = c(ORCID = "0000-0001-6165-0179"))
+Description: Calculate IFS scores and call hotspot peaks from cfDNA fragment data.
+License: MIT + file LICENSE
+Encoding: UTF-8
+LazyData: true
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.1.1
+Suggests: 
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
+URL: https://github.com/haizi-zh/cragr
+biocViews: Sequencing, Epigenetics, Software
+Imports: 
+    dplyr,
+    data.table,
+    purrr,
+    stringr,
+    here
