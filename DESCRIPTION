@@ -1,6 +1,6 @@
 Package: cragr
 Title: R package for CRAG
-Version: 0.1.0
+Version: 0.1.1
 Authors@R: 
     person(given = "Haizi",
            family = "Zheng",
@@ -23,4 +23,7 @@ Imports:
     data.table,
     purrr,
     stringr,
-    here
+    here,
+    bedr (== 1.0.7.2)
+Remotes: 
+    haizi-zh/bedr
