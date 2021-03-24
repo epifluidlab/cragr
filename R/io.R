@@ -12,7 +12,7 @@
 #' @param chrom_sizes Path to the chromosome size file.
 #' @return A `data.table` object
 #' @export
-load_fragments <-
+load_bed <-
   function(file_path,
            region = NULL,
            chrom_sizes = system.file("extdata", "human_g1k_v37.chrom.sizes", package = "cragr")) {
@@ -30,7 +30,7 @@ load_fragments <-
     if (is.null(region) || str_trim(region) == "") {
       results <-
         data.table::fread(file = file_path, na.strings = na_strings)
-    } else if (class(region) %in% c("GRanges", "character")) {
+    } else if (class(region) %in% c("GRanges", "character", "factor")) {
       # Check if we can use tabix to extract the reads
       tabix_exist <- check_binaries(binaries = "tabix", verbose = FALSE)
       index_exist <- file.exists(paste0(file_path, ".tbi"))
@@ -42,7 +42,9 @@ load_fragments <-
         results <-
           data.table::fread(cmd = tabix_cmd, na.strings = na_strings)
       } else {
-        warning("Either tabix or index does not exist. Resource to sequential scanning, which may negatively impact the performance.")
+        if (endsWith(file_path, ".gz")) {
+          warning("Either tabix or index does not exist. Resource to sequential scanning, which may negatively impact the performance.")
+        }
         results <- data.table::fread(file = file_path, na.strings = na_strings)
 
         # Postpone the filtering to after assigning column names
@@ -84,20 +86,27 @@ load_fragments <-
         results <- .filter_by_regions(results, region = region)
 
       data.table::setkeyv(results, c("chrom", "start", "end"))
-      results
+      results[]
     }
   }
 
 
-#' @rdname load_fragments
+#' @rdname load_bed
 #' @export
-load_bed <-
+load_fragments <-
   function(file_path,
            region = NULL) {
-    load_fragments(
+    frags <- load_bed(
       file_path = file_path,
       region = region
     )
+    fields <- colnames(frags)
+    assertthat::assert_that(length(fields) >=6)
+    fields[1:6] <- c("chrom", "start", "end", "name", "mapq", "strand")
+    if (length(fields) >= 8)
+      fields[7:8] <- c("cigar1", "cigar2")
+    data.table::setnames(frags, fields)
+    frags
   }
 
 

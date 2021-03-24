@@ -8,8 +8,9 @@
 #'   is tabix.
 #' @param verbose Logical value indicating whether to output detailed messages.
 #'   Default is FALSE.
+#' @param stop_on_error Stop the script completely if the result is `FALSE`.
 #' @return Logical value. TRUE if all required binaries can be found in PATH.
-check_binaries <- function(binaries = "tabix", verbose = FALSE) {
+check_binaries <- function(binaries = "tabix", verbose = FALSE, stop_on_fail = FALSE) {
   check_results <- binaries %>% purrr::map_lgl(function(binary) {
     # check if binary is in path
     if ("" == Sys.which(binary)) {
@@ -26,5 +27,9 @@ check_binaries <- function(binaries = "tabix", verbose = FALSE) {
     }
   })
 
-  all(check_results)
+  check_results <- all(check_results)
+  if (stop_on_fail)
+    assertthat::assert_that(check_results, msg = paste0("Failed in locating ", paste(binaries, collapse = ", ")))
+  else
+    check_results
 }

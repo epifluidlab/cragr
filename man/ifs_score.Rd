@@ -7,11 +7,16 @@
 ifs_score(
   fragment_data,
   chrom = NULL,
-  excluded_regions = NULL,
+  window_size = 200L,
+  step_size = 20L,
+  gc = NULL,
+  blacklist_region = NULL,
+  mappability_region = NULL,
+  mappability_threshold = 0.9,
   chrom_sizes = system.file("extdata", "human_g1k_v37.chrom.sizes", package = "cragr"),
-  min_mapq = 30,
-  min_fraglen = 50,
-  max_fraglen = 1000,
+  min_mapq = 30L,
+  min_fraglen = 50L,
+  max_fraglen = 1000L,
   exclude_soft_clipping = FALSE
 )
 }
@@ -21,10 +26,24 @@ ifs_score(
 \item{chrom}{Calculate IFS scores for certain chromosomes. If \code{NULL}, all
 chromosomes in \code{fragment_data} will be used.}
 
-\item{excluded_regions}{Those fragments whose midpoint fall within any of the
-excluded regions will not be used in the analysis. \code{excluded_regions} can
+\item{window_size}{Width of the sliding window. Must be multiples of \code{step_size}.}
+
+\item{step_size}{Incremental steps of the sliding window.}
+
+\item{gc}{A \code{data.table} or character vector indicating the G+C\% track. If
+\code{NULL}, do not perform GC-correction.}
+
+\item{blacklist_region}{Those fragments whose midpoint fall within any of the
+excluded regions will not be used in the analysis. \code{blacklist_region} can
 be either a character vector that contains the names of the files defining
-the regions (should be in BED format), or a list of \code{data.table} objects.}
+the regions (should be in BED format), a \code{data.table} object, or a list of
+\code{data.table} objects.}
+
+\item{mappability_region}{A \code{data.table} object of mappability scores, or a
+character vector of the mappability score file path.}
+
+\item{mappability_threshold}{The mappability score threshold, below which the
+region is considered as low-mappability and excluded from analysis.}
 
 \item{chrom_sizes}{Path to the chromosome size file.}
 
@@ -36,7 +55,8 @@ the regions (should be in BED format), or a list of \code{data.table} objects.}
 
 \item{exclude_soft_clipping}{For fragments with leading soft clipping, their
 inferred lengths are less reliable. If \code{TRUE}, such fragments will be
-excluded from the analysis.}
+excluded from the analysis. \code{cigar1} and \code{cigar2} should be present in the
+dataset.}
 }
 \description{
 Calculate IFS scores

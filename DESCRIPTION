@@ -24,6 +24,6 @@ Imports:
     purrr,
     stringr,
     here,
-    bedr (== 1.0.7.2)
+    bedr (== 1.0.7.3)
 Remotes: 
     haizi-zh/bedr
