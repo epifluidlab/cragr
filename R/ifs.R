@@ -485,9 +485,7 @@ ifs_score <-
     idx <- lambda <= 10
     results[idx] <- lambda[idx] %>%
       map_dbl(function(l) {
-        v <- integrate(function(x) {
-          exp(-l) * l ^ x / gamma(x + 1)
-        }, lower = 0, upper = 100)$value
+        v <- integrate(function(x) exp(x * log(l) - l - lgamma(x + 1)), lower = 0, upper = Inf)$value
         1 / v
       })
     results
@@ -528,7 +526,7 @@ ifs_score <-
     dt <- lut[dt]
 
     dcpois <- function(x, lambda, factor) {
-      factor * exp(-lambda) * lambda ^ x / gamma(x + 1)
+      factor * exp(x * log(lambda) - lambda - lgamma(x + 1))
     }
 
     # Calculate probabilities as needed
@@ -567,47 +565,6 @@ ifs_score <-
 }
 
 pcpois <- .build_pcpois()
-
-#' Build a continuous counterpart of Poisson distribution
-.build_cpois <- function(lambda) {
-  # Determine the normalization factor
-  if (lambda > 10)
-    factor <- 1
-  else {
-    f <- function(x) {
-      exp(-lambda) * lambda ^ x / gamma(x + 1)
-    }
-    factor <- 1 / integrate(f, lower = 0, upper = 100)$value
-  }
-
-  # Continuous-Poisson density
-  cpois_density <- function(x) {
-    factor * exp(-lambda) * lambda ^ x / gamma(x + 1)
-  }
-
-  function(x) {
-    sapply(X = x,
-           FUN = function(v) integrate(cpois_density, lower = 0, upper = v)$value)
-  }
-}
-
-
-#' Build a lookup table-based function for calculating continuous Poisson distribution CDF
-#'
-#' Direct calculate it using `.build_cpois` can be expensive. An alternative is building a lookup table
-.build_cpois_lookup <- function(lambda, q_max, incr = 0.001) {
-  cpois_cdf <- .build_cpois(lambda)
-  lut <- seq(0, q_max, by = incr) %>% map_dbl(cpois_cdf)
-  function(x) {
-    results <- rep(0, length(x))
-    results[is.na(lambda)] <- NA
-    results[is.na(x)] <- NA
-
-    positive_idx <- !is.na(x) & x > 0
-    results[positive_idx] <- lut[(x[positive_idx] + incr / 2) %/% incr + 1]
-    results
-  }
-}
 
 
 #' Calculate p-values based on Poisson model for each window
@@ -724,7 +681,7 @@ calc_pois_pval_local <- function(ifs, window_size, step_size, local_layout, cpoi
             apply(mat, MARGIN = 1, FUN = function(v) ifelse(all(is.na(v)), NA, max(v, na.rm = TRUE)))
           })
 
-          results <- list(
+          pval_results <- list(
             start = start[valid_score_idx],
             end = end[valid_score_idx],
             pval_local = pval_local
@@ -742,10 +699,10 @@ calc_pois_pval_local <- function(ifs, window_size, step_size, local_layout, cpoi
                   ifelse(all(is.na(v)), NA, max(v, na.rm = TRUE))
               )
             })
-            results$pval_cpois_local <- pval_cpois_local
+            pval_results$pval_cpois_local <- pval_cpois_local
           }
 
-          results
+          pval_results
         },
         by = chrom]
   data.table::setkey(local_peaks, "chrom", "start", "end")
