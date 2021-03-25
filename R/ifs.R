@@ -473,6 +473,101 @@ ifs_score <-
   }
 
 
+.build_pcpois <- function() {
+  lut <- NULL
+  lut_factor <- NULL
+  res <- 3
+  res_lambda <- 2
+
+  # Calculate the normalization factors
+  calc_factor <- function(lambda) {
+    results <- rep(1, length(lambda))
+    idx <- lambda <= 10
+    results[idx] <- lambda[idx] %>%
+      map_dbl(function(l) {
+        v <- integrate(function(x) {
+          exp(-l) * l ^ x / gamma(x + 1)
+        }, lower = 0, upper = 100)$value
+        1 / v
+      })
+    results
+  }
+
+  function(x, lambda) {
+    if (length(x) != 1 && length(lambda) != 1)
+      assertthat::are_equal(length(x), length(lambda))
+
+    x <- round(x, digits = res)
+    lambda <- round(lambda, digits = res_lambda)
+
+    # Update LUT factor and calculate factors as needed
+    if (is_null(lut_factor)) {
+      lut_factor <<-
+        data.table::as.data.table(list(lambda = unique(lambda), factor = calc_factor(unique(lambda))))
+      data.table::setkey(lut_factor, "lambda")
+    } else{
+      lut_factor <<- merge(lut_factor,
+                           data.table::as.data.table(list(lambda = unique(lambda))),
+                           all = TRUE)
+      # For lambda values that don't have factors associated yet
+      lut_factor[is.na(factor), factor := calc_factor(lambda)]
+    }
+
+    # Upate LUT
+    if (is_null(lut)) {
+      lut <<- data.table::as.data.table(list(lambda = 0.1, x = 0.1, p = 0.1))[lambda == 0]
+      data.table::setkey(lut, "lambda", "x")
+    }
+
+    dt <- data.table::as.data.table(list(lambda = lambda, x = x))
+    data.table::setkey(dt, "lambda", "x")
+
+    dt <- dt[lut_factor, nomatch=0]
+    # All factors have been calculated
+    assertthat::assert_that(!any(is.na(dt$factor)))
+    dt <- lut[dt]
+
+    dcpois <- function(x, lambda, factor) {
+      factor * exp(-lambda) * lambda ^ x / gamma(x + 1)
+    }
+
+    # Calculate probabilities as needed
+    dt <- unique(dt)[
+      is.na(p),
+      p := {
+        # Calculate the CDF using numeric integral
+        cdf_cpois <- function(v) {
+          if (is.na(v))
+            return(NA)
+          else if (v <= 0)
+            return(0)
+          else {
+            integrate(function(z)
+              dcpois(z, lambda[1], factor[1]),
+              lower = 0,
+              upper = v)$value
+          }
+        }
+        sapply(x, FUN = cdf_cpois)
+      },
+      by = lambda][, .(lambda, x, p)]
+
+    # data.table::setkey(dt, "lambda", "x")
+    full_lut <- merge(dt, lut, all = TRUE)[, p := ifelse(is.na(p.y), p.x, p.y)][, .(lambda, x, p)]
+
+    results <- merge(data.table::as.data.table(list(lambda = lambda, x = x)),
+          full_lut,
+          by = c("lambda", "x"),
+          all.x = TRUE,
+          sort = FALSE)$p
+
+    lut <<- full_lut[!is.na(x) & x > 0]
+    results
+  }
+}
+
+pcpois <- .build_pcpois()
+
 #' Build a continuous counterpart of Poisson distribution
 .build_cpois <- function(lambda) {
   # Determine the normalization factor
@@ -497,31 +592,59 @@ ifs_score <-
 }
 
 
+#' Build a lookup table-based function for calculating continuous Poisson distribution CDF
 #'
+#' Direct calculate it using `.build_cpois` can be expensive. An alternative is building a lookup table
+.build_cpois_lookup <- function(lambda, q_max, incr = 0.001) {
+  cpois_cdf <- .build_cpois(lambda)
+  lut <- seq(0, q_max, by = incr) %>% map_dbl(cpois_cdf)
+  function(x) {
+    results <- rep(0, length(x))
+    results[is.na(lambda)] <- NA
+    results[is.na(x)] <- NA
+
+    positive_idx <- !is.na(x) & x > 0
+    results[positive_idx] <- lut[(x[positive_idx] + incr / 2) %/% incr + 1]
+    results
+  }
+}
+
+
+#' Calculate p-values based on Poisson model for each window
 #'
 #' @param cpois A logical value indicating whether to calculate p-values based
 #'   on continuous Poisson model.
-#' @param local_layout Example: list(`5k` = 5000L, `10k` = 10000L)
 #' @export
-call_peak <- function(ifs, cpois = FALSE) {
+calc_pois_pval <- function(ifs, cpois = FALSE, threshold = 1e-5) {
   # Standard Poisson model
-  ifs[, pval := ppois(score, lambda = mean(score)), by = chrom][, pval_adjust := p.adjust(pval, method = "BH"), by = chrom]
+  ifs[, pval := ppois(score, lambda = mean(score)), by = chrom]
+
+  # Only those pval <= threshld are used in p-value adjustment
+  ifs[, pval_adjust := {
+    v <- ifelse(pval > threshold, 1, pval)
+    p.adjust(v, method = "BH")
+  },
+  by = chrom]
+
   if (cpois) {
-    # Fit the continuous Poisson model
-    d <-
-      ifs[, {
-        cpois = .build_cpois(mean(score))
-        list(pval = cpois(score))
-      }, by = chrom]
-    ifs[, pval_cpois := d$pval][, pval_cpois_adjust := p.adjust(pval_cpois, method = "BH"), by = chrom]
+    ifs[, pval_cpois := pcpois(score, lambda = mean(score)), by = chrom]
+
+    # Only those pval <= threshld are used in p-value adjustment
+    ifs[, pval_cpois_adjust := {
+      v <- ifelse(pval_cpois > threshold, 1, pval_cpois)
+      p.adjust(v, method = "BH")
+    },
+    by = chrom]
   }
   ifs
 }
 
 
+#' Calculate local p-values based on Poisson model for each window
 #'
+#' @param local_layout Example: list(`5k` = 5000L, `10k` = 10000L)
 #' @export
-call_peak_local <- function(ifs, window_size, step_size, local_layout) {
+calc_pois_pval_local <- function(ifs, window_size, step_size, local_layout) {
   assertthat::are_equal(window_size %% step_size, 0)
   assertthat::assert_that(all(unlist(local_layout) %% step_size == 0))
 
@@ -529,14 +652,134 @@ call_peak_local <- function(ifs, window_size, step_size, local_layout) {
   scaffold <-
     ifs[, .(start = seq(min(start), max(start), by = step_size)), by = chrom][, end := start + window_size]
   data.table::setkey(scaffold, "chrom", "start", "end")
-  ifs <- ifs[scaffold]
+  ifs_expanded <- ifs[scaffold]
 
-  for (local_suffix in names(local_layout)) {
-    local_width <- local_layout[[local_suffix]]
+  # for (local_suffix in names(local_layout)) {
+  #   local_width <- local_layout[[local_suffix]]
+  #
+  # For each row, calculate the rollmean over the "local" region, i.e. 5k or 10k
+  # bp around the center
+  local_peaks <-
+    ifs_expanded[,
+        {
+          valid_score_idx <- !is.na(score)
 
-    ifs[, score_rollmean := zoo::rollmean(score, k = local_width %/% step_size, fill = NA, align = "center", na.rm = TRUE), by = chrom]
-    ifs[, (paste0("pval_", local_suffix)) := ppois(score, score_rollmean)][, score_rollmean := NULL]
-  }
-  ifs[!is.na(score)]
+          results <- local_layout %>% map(function(local_width) {
+            # local_width: may be 5000L or 10000L
+
+            # Local means over the 5k/10k region
+            score_rollmean <- zoo::rollmean(
+              score,
+              k = local_width %/% step_size,
+              fill = NA,
+              align = "center",
+              na.rm = TRUE
+            )
+
+            # How many valid 200-bp windows in the 5k/10 rolling region?
+            rollcount <- zoo::rollapply(
+              score,
+              width = local_width %/% step_size,
+              fill = NA,
+              align = "center",
+              FUN = function(v)
+                sum(!is.na(v))
+            )
+
+            # After calculating rollmean and rollcount, we can safely remove
+            # rows with NA scores, which are dummy rows only for rolling
+            # purposes
+            score_rollmean <- score_rollmean[valid_score_idx]
+            rollcount <- rollcount[valid_score_idx]
+            score <- score[valid_score_idx]
+
+            # Only consider regions with sufficient ...
+            valid_roll_idx <- !is.na(rollcount) & (rollcount >= 30) & !is.na(score_rollmean)
+
+            results <- list()
+            # By default, the p-value is 1
+            results$pval <-
+              rep(1, length(score_rollmean))
+            results$pval[valid_roll_idx] <-
+              ppois(score[valid_roll_idx], score_rollmean[valid_roll_idx])
+            results$pval[is.na(rollcount) | is.na(score_rollmean)] <- NA
+
+            results$pval_cpois <-
+              rep(1, length(score_rollmean))
+            results$pval_cpois[valid_roll_idx] <-
+              pcpois(score[valid_roll_idx], score_rollmean[valid_roll_idx])
+            results$pval_cpois[is.na(rollcount) | is.na(score_rollmean)] <- NA
+            results
+          })
+
+          # results: a list. Each element: 5kb and 10k, in which: pval_* and pval_cpois_*
+          # Compare 5k and 10k local probabilities and find the maximum
+          pval_local <- local({
+            # Column: `5k` or `10k`
+            mat <- results %>% map(~ .$pval) %>% unlist() %>%
+              matrix(ncol = length(results))
+            apply(mat, MARGIN = 1, FUN = function(v) ifelse(all(is.na(v)), NA, max(v, na.rm = TRUE)))
+          })
+          pval_cpois_local <- local({
+            # Column: `5k` or `10k`
+            mat <- results %>% map(~ .$pval_cpois) %>% unlist() %>%
+              matrix(ncol = length(results))
+            apply(mat, MARGIN = 1, FUN = function(v) ifelse(all(is.na(v)), NA, max(v, na.rm = TRUE)))
+          })
+
+          list(
+            start = start[valid_score_idx],
+            end = end[valid_score_idx],
+            pval_local = pval_local,
+            pval_cpois_local = pval_cpois_local
+          )
+        },
+        by = chrom]
+  data.table::setkey(local_peaks, "chrom", "start", "end")
+
+  ifs <- ifs[local_peaks]
+  ifs
 }
+
+
+#' Call hotspots based on pvalues (and merge)
+#' @export
+call_hotspot <- function(ifs, use_cpois = FALSE, fdr_cutoff = 0.01, local_pval_cutoff = 1e-5, merge_distance = 200) {
+  check_binaries(stop_on_fail = TRUE)
+  if (use_cpois) {
+    hotspot <- ifs[pval_cpois_adjust <= fdr_cutoff & pval_cpois_local <= local_pval_cutoff]
+  } else {
+    hotspot <- ifs[pval_adjust <= fdr_cutoff & pval_local <= local_pval_cutoff]
+  }
+
+  fields <- colnames(ifs)
+
+  merge_cols <- c("score", "cov", "score0", "cov_corrected", "mappability", "gc", "pval", "pval_adjust", "pval_local")
+  merge_stat <- c(rep("sum", 4), rep("mean", 2), rep("max", 3))
+
+  if ("pval_cpois" %in% colnames(ifs)) {
+    merge_cols <- c(merge_cols, "pval_cpois", "pval_cpois_adjust", "pval_cpois_local")
+    merge_stat <- c(merge_stat, rep("max", 3))
+  }
+  merge_cols <- merge_cols %>% map_int(function(v) which(fields == v))
+  merge_param <- paste0("-c ", paste(merge_cols, collapse = ","), " -o ", paste(merge_stat, collapse = ","))
+
+  hotspot <-
+    bedr::bedr(
+      method = "merge",
+      capture.output = "disk",
+      input = list(i = hotspot),
+      param = str_interp("-d ${merge_distance} ${merge_param}"),
+      check.chr = FALSE,
+      check.zero.based = FALSE,
+      check.valid = FALSE,
+      check.sort = FALSE,
+      check.merge = FALSE,
+      verbose = FALSE
+    ) %>% data.table::as.data.table()
+  data.table::setkey(hotspot, "chrom", "start", "end")
+  hotspot %>% mutate(name = ".") %>% relocate(name, .after = end)
+}
+
+
 

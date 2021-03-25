@@ -24,6 +24,8 @@ Imports:
     purrr,
     stringr,
     here,
-    bedr (== 1.0.7.3)
+    bedr (== 1.0.7.3),
+    zoo,
+    optparse
 Remotes: 
     haizi-zh/bedr

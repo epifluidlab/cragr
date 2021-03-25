@@ -243,3 +243,64 @@ load_fragments <-
   }
   dt
 }
+
+
+#' Write data frame to disk in BED format
+#'
+#' If the target file indicates gzip-compression, will invoke bgzip rather than
+#' standard gzip. Another feature is, if the output file should contain header
+#' lines, they will start with `#`, as specified in BED format specification.
+#' @param dt Data frame to write.
+#' @param file_path Output file name.
+#' @param col_names A logical value indicating whether to output colum names.
+#' @param create_index A logical value indicating whether to create an index
+#'   file. Ignored if the output is not gzipped.
+#' @export
+write_bed <- function(dt, file_path, col_names = TRUE, create_index = FALSE, ...) {
+  is_gzipped <- endsWith(file_path, ".gz")
+  scipen <- 999
+
+  if (col_names == TRUE) {
+    fields <- colnames(dt)
+    old_fields <- data.table::copy(fields)
+    data.table::setnames(dt, old = fields[1], new = paste0("#", fields[1]))
+    on.exit(data.table::setnames(dt, old_fields), add = TRUE)
+  }
+
+  if (is_gzipped) {
+    # bgzip should be present
+    check_binaries(binaries = "bgzip", stop_on_fail = TRUE)
+    if (create_index)
+      check_binaries(binaries = "tabix", stop_on_fail = TRUE)
+
+    temp_bed <- tempfile(fileext = ".bed")
+    on.exit(file.remove(temp_bed), add = TRUE)
+
+    data.table::fwrite(
+      dt,
+      file = temp_bed,
+      col.names = col_names,
+      sep = "\t",
+      quote = FALSE,
+      scipen = scipen,
+      na = ".",
+      ...
+    )
+
+    system(str_interp("bgzip < ${temp_bed} > ${file_path}"))
+    if (create_index)
+      system(str_interp("tabix -p bed ${file_path}"))
+  } else {
+    data.table::fwrite(
+      dt,
+      file = file_path,
+      col.names = col_names,
+      sep = "\t",
+      quote = FALSE,
+      scipen = scipen,
+      na = ".",
+      ...
+    )
+  }
+}
+

@@ -4,7 +4,7 @@
 \alias{check_binaries}
 \title{Check if required binaries exist in PATH}
 \usage{
-check_binaries(binaries = "tabix", verbose = FALSE)
+check_binaries(binaries = "tabix", verbose = FALSE, stop_on_fail = FALSE)
 }
 \arguments{
 \item{binaries}{Character vector indicating what binaries to check. Default
@@ -12,6 +12,8 @@ is tabix.}
 
 \item{verbose}{Logical value indicating whether to output detailed messages.
 Default is FALSE.}
+
+\item{stop_on_error}{Stop the script completely if the result is \code{FALSE}.}
 }
 \value{
 Logical value. TRUE if all required binaries can be found in PATH.
