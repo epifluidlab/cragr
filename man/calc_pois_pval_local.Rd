@@ -4,7 +4,7 @@
 \alias{calc_pois_pval_local}
 \title{Calculate local p-values based on Poisson model for each window}
 \usage{
-calc_pois_pval_local(ifs, window_size, step_size, local_layout)
+calc_pois_pval_local(ifs, window_size, step_size, local_layout, cpois = FALSE)
 }
 \arguments{
 \item{local_layout}{Example: list(\verb{5k} = 5000L, \verb{10k} = 10000L)}

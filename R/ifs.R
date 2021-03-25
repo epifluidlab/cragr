@@ -644,7 +644,7 @@ calc_pois_pval <- function(ifs, cpois = FALSE, threshold = 1e-5) {
 #'
 #' @param local_layout Example: list(`5k` = 5000L, `10k` = 10000L)
 #' @export
-calc_pois_pval_local <- function(ifs, window_size, step_size, local_layout) {
+calc_pois_pval_local <- function(ifs, window_size, step_size, local_layout, cpois = FALSE) {
   assertthat::are_equal(window_size %% step_size, 0)
   assertthat::assert_that(all(unlist(local_layout) %% step_size == 0))
 
@@ -704,11 +704,14 @@ calc_pois_pval_local <- function(ifs, window_size, step_size, local_layout) {
               ppois(score[valid_roll_idx], score_rollmean[valid_roll_idx])
             results$pval[is.na(rollcount) | is.na(score_rollmean)] <- NA
 
-            results$pval_cpois <-
-              rep(1, length(score_rollmean))
-            results$pval_cpois[valid_roll_idx] <-
-              pcpois(score[valid_roll_idx], score_rollmean[valid_roll_idx])
-            results$pval_cpois[is.na(rollcount) | is.na(score_rollmean)] <- NA
+            if (cpois) {
+              results$pval_cpois <-
+                rep(1, length(score_rollmean))
+              results$pval_cpois[valid_roll_idx] <-
+                pcpois(score[valid_roll_idx], score_rollmean[valid_roll_idx])
+              results$pval_cpois[is.na(rollcount) | is.na(score_rollmean)] <- NA
+            }
+
             results
           })
 
@@ -720,19 +723,29 @@ calc_pois_pval_local <- function(ifs, window_size, step_size, local_layout) {
               matrix(ncol = length(results))
             apply(mat, MARGIN = 1, FUN = function(v) ifelse(all(is.na(v)), NA, max(v, na.rm = TRUE)))
           })
-          pval_cpois_local <- local({
-            # Column: `5k` or `10k`
-            mat <- results %>% map(~ .$pval_cpois) %>% unlist() %>%
-              matrix(ncol = length(results))
-            apply(mat, MARGIN = 1, FUN = function(v) ifelse(all(is.na(v)), NA, max(v, na.rm = TRUE)))
-          })
 
-          list(
+          results <- list(
             start = start[valid_score_idx],
             end = end[valid_score_idx],
-            pval_local = pval_local,
-            pval_cpois_local = pval_cpois_local
+            pval_local = pval_local
           )
+
+          if (cpois) {
+            pval_cpois_local <- local({
+              # Column: `5k` or `10k`
+              mat <- results %>% map( ~ .$pval_cpois) %>% unlist() %>%
+                matrix(ncol = length(results))
+              apply(
+                mat,
+                MARGIN = 1,
+                FUN = function(v)
+                  ifelse(all(is.na(v)), NA, max(v, na.rm = TRUE))
+              )
+            })
+            results$pval_cpois_local <- pval_cpois_local
+          }
+
+          results
         },
         by = chrom]
   data.table::setkey(local_peaks, "chrom", "start", "end")
@@ -777,6 +790,7 @@ call_hotspot <- function(ifs, use_cpois = FALSE, fdr_cutoff = 0.01, local_pval_c
       check.merge = FALSE,
       verbose = FALSE
     ) %>% data.table::as.data.table()
+  data.table::setnames(hotspot, new = fields)
   data.table::setkey(hotspot, "chrom", "start", "end")
   hotspot %>% mutate(name = ".") %>% relocate(name, .after = end)
 }
