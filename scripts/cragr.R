@@ -53,12 +53,12 @@ if (interactive()) {
     option_list = list(
       optparse::make_option(c("--input"), help = "Path to the inpuut file"),
       # Can be either "frag" or "ifs"
-      optparse::make_option(
-        c("--input-type"),
-        type = "character",
-        default = "frag",
-        help = "Type of the input. 'frag' for fragment data file, and 'ifs' for pre-calculated IFS scores. Default is 'frag'"
-      ),
+      # optparse::make_option(
+      #   c("--input-type"),
+      #   type = "character",
+      #   default = "frag",
+      #   help = "Type of the input. 'frag' for fragment data file, and 'ifs' for pre-calculated IFS scores. Default is 'frag'"
+      # ),
       # optparse::make_option(c("--output-dir"), type = "character", help = "Directory for output files"),
       optparse::make_option(c("--prefix"), type = "character", help = "Prefix of the output file names"),
       optparse::make_option(
@@ -175,9 +175,9 @@ if (interactive()) {
   if (!is_null(script_args$mappability_threshold))
     script_args$mappability_threshold <- as.numeric(script_args$mappability_threshold)
 
-  if (!script_args$input_type %in% c("frag", "ifs")) {
-    stop("--input-type should be either frag or ifs.")
-  }
+  # if (!script_args$input_type %in% c("frag", "ifs")) {
+  #   stop("--input-type should be either frag or ifs.")
+  # }
 
   if (is_null(script_args$merge_distance))
     script_args$merge_distance <- script_args$window_size
@@ -197,7 +197,7 @@ names(script_args) %>%
   })
 
 
-if (script_args$input_type == "frag") {
+if (subcommand %in% c("ifs", "main")) {
   logging::loginfo("Input: fragment data")
 
   logging::loginfo(str_interp("Loading fragments: ${script_args$input}"))
@@ -211,7 +211,6 @@ if (script_args$input_type == "frag") {
   if (!is_null(script_args$exclude_chrom)) {
     frag <- frag[!(chrom %in% script_args$exclude_chrom)]
   }
-
 
 
   logging::loginfo("Fragments summary:")
@@ -234,95 +233,104 @@ if (script_args$input_type == "frag") {
     max_fraglen = script_args$max_fraglen,
     exclude_soft_clipping = script_args$exclude_soft_clipping
   )
-  rm(frag)
-} else if (script_args$input_type == "ifs") {
-  logging::loginfo("Input: IFS scores")
 
-  ifs <- load_bed(script_args$input)
-} else {
-  stop(str_interp("Invalid input type: ${script_args$input_type}"))
-}
-
-logging::loginfo("Calculating global p-values ...")
-ifs <- calc_pois_pval(ifs, cpois = script_args$cpois)
-
-logging::loginfo("Calculating local p-values ...")
-ifs <-
-  calc_pois_pval_local(
+  write_bed(
     ifs,
-    cpois = script_args$cpois,
-    window_size = script_args$window_size,
-    step_size = script_args$step_size,
-    local_layout = list(`5k` = 5e3L, `10k` = 10e3L)
+    file_path = str_interp(
+      "${script_args$prefix}.ifs.raw.bedGraph.gz"
+    ),
+    create_index = TRUE
   )
 
-logging::loginfo("Calling hotspots ...")
+  rm(frag)
+}
 
-pval_local_cutoff <- 1e-5
 
-if (script_args$cpois) {
-  hotspot_cpois <-
+if (subcommand == "hotspot") {
+  logging::loginfo("Loading IFS scores ...")
+  # Load IFS score from input file
+  ifs <- load_bed(script_args$input)
+}
+
+
+if (subcommand %in% c("hotspot", "main")) {
+  logging::loginfo("Calculating global p-values ...")
+  ifs <- calc_pois_pval(ifs, cpois = script_args$cpois)
+
+  logging::loginfo("Calculating local p-values ...")
+  ifs <-
+    calc_pois_pval_local(
+      ifs,
+      cpois = script_args$cpois,
+      window_size = script_args$window_size,
+      step_size = script_args$step_size,
+      local_layout = list(`5k` = 5e3L, `10k` = 10e3L)
+    )
+
+  logging::loginfo("Calling hotspots ...")
+
+  pval_local_cutoff <- 1e-5
+
+  if (script_args$cpois) {
+    hotspot_cpois <-
+      call_hotspot(
+        ifs,
+        use_cpois = TRUE,
+        fdr_cutoff = script_args$fdr,
+        local_pval_cutoff = pval_local_cutoff,
+        merge_distance = script_args$merge_distance
+      )
+  }
+
+  hotspot_standard <-
     call_hotspot(
       ifs,
-      use_cpois = TRUE,
+      use_cpois = FALSE,
       fdr_cutoff = script_args$fdr,
       local_pval_cutoff = pval_local_cutoff,
       merge_distance = script_args$merge_distance
     )
-}
 
-hotspot_standard <-
-  call_hotspot(
-    ifs,
-    use_cpois = FALSE,
-    fdr_cutoff = script_args$fdr,
-    local_pval_cutoff = pval_local_cutoff,
-    merge_distance = script_args$merge_distance
-  )
-
-logging::loginfo("Writing results to disk ...")
-output_dir <- dirname(script_args$prefix)
-if (!dir.exists(output_dir))
-  dir.create(output_dir)
+  logging::loginfo("Writing results to disk ...")
+  output_dir <- dirname(script_args$prefix)
+  if (!dir.exists(output_dir))
+    dir.create(output_dir)
 
 
-# This is ifs. Each row corresponds to a 200bp region, and they are overlapping.
-# We're more interested in a BEDGRAPH-style non-overlapping track
-#    chrom    start      end    score cov mappability    gc   score0 cov_corrected      pval pval_adjust pval_cpois pval_cpois_adjust
-# 1:    21  9412520  9412720 27.58913   9   0.9050833 0.295 17.90432      13.78962 0.9599079           1  0.9611725                 1
-# 2:    21  9412540  9412740 29.36389  10   0.9750000 0.290 19.67908      14.78962 0.9841276           1  0.9828842                 1
-# 3:    21  9412560  9412760 27.48691   9   0.9417500 0.270 17.80209      13.78962 0.9599079           1  0.9594159                 1
-# 4:    21 10872940 10873140 71.61589  31   0.9162698 0.470 61.93108      35.78962 1.0000000           1  1.0000000                 1
-# 5:    21 10873160 10873360 73.56209  33   0.9200000 0.510 63.87727      37.78962 1.0000000           1  1.0000000                 1
-#
-# After this transformation, the IFS track looks like this:
-#    chrom    start      end    score cov mappability    gc   score0 cov_corrected      pval pval_adjust pval_cpois pval_cpois_adjust
-# 1:    21  9412610  9412630 27.58913   9   0.9050833 0.295 17.90432      13.78962 0.9599079           1  0.9611725                 1
-# 2:    21  9412630  9412650 29.36389  10   0.9750000 0.290 19.67908      14.78962 0.9841276           1  0.9828842                 1
-# 3:    21  9412650  9412670 27.48691   9   0.9417500 0.270 17.80209      13.78962 0.9599079           1  0.9594159                 1
-# 4:    21 10873030 10873050 71.61589  31   0.9162698 0.470 61.93108      35.78962 1.0000000           1  1.0000000                 1
-# 5:    21 10873250 10873270 73.56209  33   0.9200000 0.510 63.87727      37.78962 1.0000000           1  1.0000000                 1
-ws_ratio <- script_args$window_size %/% script_args$step_size
-ifs[, start := as.integer(round(start + (ws_ratio - 1) / 2 * script_args$step_size))][, end := as.integer(start + script_args$step_size)]
-write_bed(
-  ifs,
-  file_path = str_interp(
-    "${script_args$prefix}.ifs.bedGraph.gz"
-  ),
-  create_index = TRUE
-)
-write_bed(
-  hotspot_standard,
-  file_path = str_interp(
-    "${script_args$prefix}.hotspot.bed.gz"
-  ),
-  create_index = TRUE
-)
-
-if (script_args$cpois) {
+  # This is ifs. Each row corresponds to a 200bp region, and they are overlapping.
+  # We're more interested in a BEDGRAPH-style non-overlapping track
+  #    chrom    start      end    score cov mappability    gc   score0 cov_corrected      pval pval_adjust pval_cpois pval_cpois_adjust
+  # 1:    21  9412520  9412720 27.58913   9   0.9050833 0.295 17.90432      13.78962 0.9599079           1  0.9611725                 1
+  # 2:    21  9412540  9412740 29.36389  10   0.9750000 0.290 19.67908      14.78962 0.9841276           1  0.9828842                 1
+  # 3:    21  9412560  9412760 27.48691   9   0.9417500 0.270 17.80209      13.78962 0.9599079           1  0.9594159                 1
+  # 4:    21 10872940 10873140 71.61589  31   0.9162698 0.470 61.93108      35.78962 1.0000000           1  1.0000000                 1
+  # 5:    21 10873160 10873360 73.56209  33   0.9200000 0.510 63.87727      37.78962 1.0000000           1  1.0000000                 1
+  #
+  # After this transformation, the IFS track looks like this:
+  #    chrom    start      end    score cov mappability    gc   score0 cov_corrected      pval pval_adjust pval_cpois pval_cpois_adjust
+  # 1:    21  9412610  9412630 27.58913   9   0.9050833 0.295 17.90432      13.78962 0.9599079           1  0.9611725                 1
+  # 2:    21  9412630  9412650 29.36389  10   0.9750000 0.290 19.67908      14.78962 0.9841276           1  0.9828842                 1
+  # 3:    21  9412650  9412670 27.48691   9   0.9417500 0.270 17.80209      13.78962 0.9599079           1  0.9594159                 1
+  # 4:    21 10873030 10873050 71.61589  31   0.9162698 0.470 61.93108      35.78962 1.0000000           1  1.0000000                 1
+  # 5:    21 10873250 10873270 73.56209  33   0.9200000 0.510 63.87727      37.78962 1.0000000           1  1.0000000                 1
+  ws_ratio <- script_args$window_size %/% script_args$step_size
+  ifs[, start := as.integer(round(start + (ws_ratio - 1) / 2 * script_args$step_size))][, end := as.integer(start + script_args$step_size)]
   write_bed(
-    hotspot_cpois,
-    file_path = str_interp("${script_args$prefix}.hotspot.cpois.bed.gz"),
+    ifs,
+    file_path = str_interp("${script_args$prefix}.ifs.bedGraph.gz"),
     create_index = TRUE
   )
+  write_bed(
+    hotspot_standard,
+    file_path = str_interp("${script_args$prefix}.hotspot.bed.gz"),
+    create_index = TRUE
+  )
+
+  if (script_args$cpois) {
+    write_bed(
+      hotspot_cpois,
+      file_path = str_interp("${script_args$prefix}.hotspot.cpois.bed.gz"),
+      create_index = TRUE
+    )
+  }
 }
