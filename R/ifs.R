@@ -289,18 +289,30 @@ ifs_score <-
 
   ifs <- ifs[, `:=`(
     end = start + window_size,
-    score = zoo::rollsum(
+    score = rollsum(
       score,
       k = n,
-      fill = NA,
+      na_pad = TRUE,
       align = "left"
     ),
-    cov = zoo::rollsum(
+    cov = rollsum(
       cov,
       k = n,
-      fill = NA,
+      na_pad = TRUE,
       align = "left"
     )
+    # score = zoo::rollsum(
+    #   score,
+    #   k = n,
+    #   fill = NA,
+    #   align = "left"
+    # ),
+    # cov = zoo::rollsum(
+    #   cov,
+    #   k = n,
+    #   fill = NA,
+    #   align = "left"
+    # )
   )][!is.na(score) & !is.na(cov)]
 
   # Eliminate float-point errors
@@ -627,25 +639,37 @@ calc_pois_pval_local <- function(ifs, window_size, step_size, local_layout, cpoi
 
           results <- local_layout %>% map(function(local_width) {
             # local_width: may be 5000L or 10000L
-
             # Local means over the 5k/10k region
-            score_rollmean <- zoo::rollmean(
+            score_rollmean <- rollmean(
               score,
               k = local_width %/% step_size,
-              fill = NA,
+              na_pad = TRUE,
               align = "center",
-              na.rm = TRUE
+              na_rm = TRUE
             )
+            # score_rollmean <- zoo::rollmean(
+            #   score,
+            #   k = local_width %/% step_size,
+            #   fill = NA,
+            #   align = "center",
+            #   na.rm = TRUE
+            # )
 
             # How many valid 200-bp windows in the 5k/10 rolling region?
-            rollcount <- zoo::rollapply(
-              score,
-              width = local_width %/% step_size,
-              fill = NA,
-              align = "center",
-              FUN = function(v)
-                sum(!is.na(v))
+            rollcount <- rollsum(
+              as.integer(!is.na(score)),
+              k = local_width %/% step_size,
+              na_pad = TRUE,
+              align = "center"
             )
+            # rollcount <- zoo::rollapply(
+            #   score,
+            #   width = local_width %/% step_size,
+            #   fill = NA,
+            #   align = "center",
+            #   FUN = function(v)
+            #     sum(!is.na(v))
+            # )
 
             # After calculating rollmean and rollcount, we can safely remove
             # rows with NA scores, which are dummy rows only for rolling

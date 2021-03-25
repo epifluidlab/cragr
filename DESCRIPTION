@@ -26,6 +26,9 @@ Imports:
     here,
     bedr (== 1.0.7.3),
     zoo,
-    optparse
+    optparse,
+    Rcpp
 Remotes: 
     haizi-zh/bedr
+LinkingTo: 
+    Rcpp
