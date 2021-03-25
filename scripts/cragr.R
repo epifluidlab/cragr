@@ -123,12 +123,12 @@ if (interactive()) {
       ),
       optparse::make_option(c("--window-size"), default = 200L, help = "Size of the sliding window. Default is 200"),
       optparse::make_option(c("--step-size"), default = 20L, help = "Step size of the sliding window. Default is 20"),
-      # optparse::make_option(
-      #   c("--cpois"),
-      #   action = "store_true",
-      #   default = FALSE,
-      #   help = "Use continuous Poisson model to call hotspots"
-      # ),
+      optparse::make_option(
+        c("--cpois"),
+        action = "store_true",
+        default = FALSE,
+        help = "Use continuous Poisson model to call hotspots"
+      ),
       optparse::make_option(c("--fdr"), default = 0.01, help = "FDR cut-off value used in hotspot calling. Default is 0.01"),
       optparse::make_option(
         c("--merge-distance"),
@@ -234,6 +234,7 @@ if (script_args$input_type == "frag") {
     max_fraglen = script_args$max_fraglen,
     exclude_soft_clipping = script_args$exclude_soft_clipping
   )
+  rm(frag)
 } else if (script_args$input_type == "ifs") {
   logging::loginfo("Input: IFS scores")
 
@@ -243,31 +244,32 @@ if (script_args$input_type == "frag") {
 }
 
 logging::loginfo("Calculating global p-values ...")
-ifs <- calc_pois_pval(ifs, cpois = TRUE)
+ifs <- calc_pois_pval(ifs, cpois = script_args$cpois)
 
 logging::loginfo("Calculating local p-values ...")
 ifs <-
   calc_pois_pval_local(
     ifs,
-    cpois = TRUE,
+    cpois = script_args$cpois,
     window_size = script_args$window_size,
     step_size = script_args$step_size,
     local_layout = list(`5k` = 5e3L, `10k` = 10e3L)
-    # local_layout = list(`5k` = 1e3L)
   )
 
 logging::loginfo("Calling hotspots ...")
 
 pval_local_cutoff <- 1e-5
 
-hotspot_cpois <-
-  call_hotspot(
-    ifs,
-    use_cpois = TRUE,
-    fdr_cutoff = script_args$fdr,
-    local_pval_cutoff = pval_local_cutoff,
-    merge_distance = script_args$merge_distance
-  )
+if (script_args$cpois) {
+  hotspot_cpois <-
+    call_hotspot(
+      ifs,
+      use_cpois = TRUE,
+      fdr_cutoff = script_args$fdr,
+      local_pval_cutoff = pval_local_cutoff,
+      merge_distance = script_args$merge_distance
+    )
+}
 
 hotspot_standard <-
   call_hotspot(
@@ -316,10 +318,11 @@ write_bed(
   ),
   create_index = TRUE
 )
-write_bed(
-  hotspot_cpois,
-  file_path = str_interp(
-    "${script_args$prefix}.hotspot.cpois.bed.gz"
-  ),
-  create_index = TRUE
-)
+
+if (script_args$cpois) {
+  write_bed(
+    hotspot_cpois,
+    file_path = str_interp("${script_args$prefix}.hotspot.cpois.bed.gz"),
+    create_index = TRUE
+  )
+}

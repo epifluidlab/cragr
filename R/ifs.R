@@ -144,6 +144,8 @@ ifs_score <-
                       cov = .N,
                       len_sum = sum(length, na.rm = TRUE)),
                     by = .(window_id)]
+    rm(fragment_data)
+
     ifs[, `:=`(
       score = cov + len_sum / avg_len,
       start = window_id * step_size,
@@ -283,6 +285,7 @@ ifs_score <-
   scaffold[, end := start + step_size]
   data.table::setkey(scaffold, "chrom", "start", "end")
   ifs <- ifs[scaffold][is.na(score), score := 0][is.na(cov), cov := 0]
+  rm(scaffold)
 
   ifs <- ifs[, `:=`(
     end = start + window_size,
@@ -610,6 +613,7 @@ calc_pois_pval_local <- function(ifs, window_size, step_size, local_layout, cpoi
     ifs[, .(start = seq(min(start), max(start), by = step_size)), by = chrom][, end := start + window_size]
   data.table::setkey(scaffold, "chrom", "start", "end")
   ifs_expanded <- ifs[scaffold]
+  rm(scaffold)
 
   # for (local_suffix in names(local_layout)) {
   #   local_width <- local_layout[[local_suffix]]
