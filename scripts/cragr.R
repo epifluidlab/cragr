@@ -249,7 +249,16 @@ if (subcommand %in% c("ifs", "main")) {
 if (subcommand == "hotspot") {
   logging::loginfo("Loading IFS scores ...")
   # Load IFS score from input file
-  ifs <- load_bed(script_args$input)
+
+  if (!is_null(script_args$chrom)) {
+    ifs <- load_bed(script_args$input, region = script_args[["chrom"]])
+  } else {
+    ifs <- load_bed(script_args$input)
+  }
+
+  if (!is_null(script_args$exclude_chrom)) {
+    ifs <- ifs[!(chrom %in% script_args$exclude_chrom)]
+  }
 }
 
 

@@ -593,8 +593,8 @@ calc_pois_pval <- function(ifs, cpois = FALSE, threshold = 1e-5) {
 
   # Only those pval <= threshld are used in p-value adjustment
   ifs[, pval_adjust := {
-    v <- ifelse(pval > threshold, 1, pval)
-    p.adjust(v, method = "BH")
+    # v <- ifelse(pval > threshold, 1, pval)
+    p.adjust(pval, method = "BH")
   },
   by = chrom]
 
@@ -603,8 +603,8 @@ calc_pois_pval <- function(ifs, cpois = FALSE, threshold = 1e-5) {
 
     # Only those pval <= threshld are used in p-value adjustment
     ifs[, pval_cpois_adjust := {
-      v <- ifelse(pval_cpois > threshold, 1, pval_cpois)
-      p.adjust(v, method = "BH")
+      # v <- ifelse(pval_cpois > threshold, 1, pval_cpois)
+      p.adjust(pval, method = "BH")
     },
     by = chrom]
   }
