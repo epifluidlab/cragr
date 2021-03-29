@@ -125,6 +125,7 @@ ifs_score <-
 
 
     # Exclude dark regions
+    logging::loginfo("Excluding blacklist regions ...")
     if (!is.null(excluded_regions)) {
       fragment_data <-
         .exclude_region(
@@ -137,6 +138,7 @@ ifs_score <-
 
 
     # Get coverage and calcuate IFS score for each 20bp (step-size) window
+    logging::loginfo("Calculating raw IFS scores ...")
     fragment_data[, window_id := start %/% step_size]
     avg_len <- mean(fragment_data$length)
     ifs <-
@@ -166,6 +168,7 @@ ifs_score <-
       )
 
     # Exclude low-mappability regions
+    logging::loginfo("Excluding low mappability regions ...")
     if (!is_null(mappability_region)) {
       if (is_character(mappability_region)) {
         mappability_region <- load_bed(mappability_region, region = chrom)
@@ -180,6 +183,7 @@ ifs_score <-
     }
 
     # Don't perform GC correctoion
+    logging::loginfo("Performing GC correction ...")
     if (!is_null(gc)) {
       if (is_character(gc)) {
         gc <- load_bed(gc, region = chrom)
@@ -194,6 +198,7 @@ ifs_score <-
     }
 
     # Calculate z-scores
+    logging::loginfo("Calculating z-scores ...")
     .calc_ifs_z_score(ifs)
   }
 
