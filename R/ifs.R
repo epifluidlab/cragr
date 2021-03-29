@@ -32,7 +32,7 @@ ifs_score <-
            step_size = 20L,
            gc = NULL,
            blacklist_region = NULL,
-           mappability_region = NULL,
+           mappability_region,
            mappability_threshold = 0.9,
            chrom_sizes = system.file("extdata", "human_g1k_v37.chrom.sizes", package = "cragr"),
            min_mapq = 30L,
@@ -40,6 +40,7 @@ ifs_score <-
            max_fraglen = 1000L,
            exclude_soft_clipping = FALSE) {
     assertthat::are_equal(window_size %% step_size, 0)
+    assertthat::assert_that(!is.null(mappability_region))
     if (is.null(chrom)) {
       chrom <- as.character(unique(fragment_data$chrom))
     } else {
@@ -156,7 +157,13 @@ ifs_score <-
 
     # Perform rolling sum over the sliding windows, therefore we have results
     # for rolling windows (200bp, window_size) at step size of (20bp, step_size)
-    ifs <- .slide_window(ifs, window_size = window_size, step_size = step_size)
+    ifs <-
+      .slide_window(
+        ifs,
+        window_size = window_size,
+        step_size = step_size,
+        chrom_sizes = chrom_sizes
+      )
 
     # Exclude low-mappability regions
     if (!is_null(mappability_region)) {
@@ -243,14 +250,14 @@ ifs_score <-
   model <-
     loess(
       formula = score0 ~ gc,
-      data = ifs[score0 > 0][, .(gc, score0)],
+      data = ifs[, .(gc, score0)],
       control = loess.control(
         surface = "interpolate",
         statistics = "approximate",
         trace.hat = "approximate"
       )
     )
-  ifs[score0 > 0, score := model$residuals + mean(score0)]
+  ifs[, score := model$residuals + mean(score0)]
 
   # train_data <- ifs[score0 > 0][1:20e3L, .(gc, score0)]
   # model <- loess(formula = score0 ~ gc, data = train_data)
@@ -305,17 +312,30 @@ ifs_score <-
 #' contains a whole number of `step_size` bins.
 #' @param window_size Width of the sliding window. Must be multiples of `step_size`.
 #' @param step_size Incremental steps of the sliding window.
-.slide_window <- function(ifs, window_size, step_size) {
+#' @param chrom_sizes A chromosome sizes table
+.slide_window <- function(ifs, window_size, step_size, chrom_sizes) {
   assertthat::are_equal(window_size %% step_size, 0)
+  assertthat::are_equal(length(unique(ifs$chrom)), 1)
+
+  chrom_sizes <-
+    data.table::fread(chrom_sizes,
+                      col.names = c("chrom", "size"),
+                      header = FALSE)
+  chrom_sizes[, chrom := factor(chrom)]
 
   n <- window_size %/% step_size
 
   # Construct a continuous IFS score track, with filled 0s.
+
   scaffold <-
-    data.table::data.table(chrom = ifs$chrom[1],
-                           start = seq(min(ifs$start), max(ifs$start),
-                                       by = step_size))
-  scaffold[, end := start + step_size]
+    data.table::data.table(chrom = ifs$chrom[1])[chrom_sizes, nomatch = 0, on = "chrom"]
+  scaffold <- scaffold[, {
+    gid <- 0:(size %/% step_size)
+    start <- as.integer(gid * step_size)
+    end <- as.integer((gid + 1) * step_size)
+    list(chrom, start, end)
+  }]
+
   data.table::setkey(scaffold, "chrom", "start", "end")
   ifs <- ifs[scaffold][is.na(score), score := 0][is.na(cov), cov := 0]
   rm(scaffold)
@@ -334,60 +354,13 @@ ifs_score <-
       na_pad = TRUE,
       align = "left"
     )
-    # score = zoo::rollsum(
-    #   score,
-    #   k = n,
-    #   fill = NA,
-    #   align = "left"
-    # ),
-    # cov = zoo::rollsum(
-    #   cov,
-    #   k = n,
-    #   fill = NA,
-    #   align = "left"
-    # )
   )][!is.na(score) & !is.na(cov)]
 
   # Eliminate float-point errors
   ifs[abs(score) < 1e-9, score := 0]
 
   data.table::setkey(ifs, "chrom", "start", "end")
-  ifs[score > 0]
-
-
-
-  # # Build a matrix: N by n, where N is the number of IFS rows. If window_size is
-  # # 200 and step_size is 20, n is 10, means that at most we need combine 10
-  # # step_size bins into a window bin.
-  # # Each column is the IFS scores, but incrementally shifted.
-  # m_ifs <- 0:(n-1) %>% map(function(s) {
-  #   if (s == 0) return(ifs$score)
-  #   data.table::shift(ifs$score, n = -s)
-  # }) %>% unlist() %>% matrix(ncol = n)
-  #
-  # m_cov <- 0:(n-1) %>% map(function(s) {
-  #   if (s == 0) return(ifs$cov)
-  #   data.table::shift(ifs$cov, n = -s)
-  # }) %>% unlist() %>% matrix(ncol = n)
-  #
-  # # A matrix of the same dimension. Each column is the shifted start position.
-  # m_pos <- 0:(n-1) %>% map(function(s) {
-  #   if (s == 0) return(ifs$start)
-  #   data.table::shift(ifs$start, n = -s)
-  # }) %>% unlist() %>% matrix(ncol = n)
-  #
-  # # Indicate whether the element should be included in the window. If an element
-  # # is too far way (further than the window_size), it should be excluded.
-  # m_include <- (m_pos <= m_pos[,1] + window_size - step_size)
-  #
-  # ifs <-
-  #   ifs[, `:=`(
-  #     end = start + window_size,
-  #     cov = rowSums(m_cov * m_include),
-  #     score = rowSums(m_ifs * m_include)
-  #   )][!is.na(score)]
-  # data.table::setkey(ifs, "chrom", "start", "end")
-  # ifs[]
+  ifs
 }
 
 #' Exclude certain regions from the dataset, using `bedtools`

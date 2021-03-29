@@ -70,7 +70,6 @@ if (interactive()) {
       optparse::make_option(
         c("--mappability"),
         type = "character",
-        default = NULL,
         help = "Path to the mappability file. Default is NULL, i.e. do NOT exclude fragments from low-mappability regions"
       ),
       optparse::make_option(
