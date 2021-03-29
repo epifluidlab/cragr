@@ -252,23 +252,31 @@ ifs_score <-
   data.table::setnames(ifs, "score", "score0")
 
   # Use all points
+  logging::loginfo(str_interp("Training using LOESS mode, total n = ${nrow(ifs)}"))
+  train_data <- ifs[, .(gc, score0)] %>% slice_sample(n = 2e6L)
   model <-
     loess(
       formula = score0 ~ gc,
-      data = ifs[, .(gc, score0)],
+      data = train_data,
       control = loess.control(
         surface = "interpolate",
         statistics = "approximate",
         trace.hat = "approximate"
       )
     )
-  ifs[, score := model$residuals + mean(score0)]
+  rm(train_data)
+  logging::loginfo("Finished training")
+  logging::loginfo("Applying the model for GC correction ...")
+  ifs[, score := score0 - predict(model, newdata = gc) + mean(score0)]
+  # ifs[, score := model$residuals + mean(score0)]
 
   # train_data <- ifs[score0 > 0][1:20e3L, .(gc, score0)]
   # model <- loess(formula = score0 ~ gc, data = train_data)
   # ifs[score0 > 0, score := score0 - predict(model, newdata = gc) + mean(score0)]
 
   ifs[score < 0, score := 0]
+
+  logging::loginfo("Finished performing GC correction")
 
   # # Also perform GC-correction for coverage
   # ifs[score > 0, cov_corrected := cov - lowess(x = gc, y = cov, f = span)$y + mean(cov)]
