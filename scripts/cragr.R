@@ -289,7 +289,14 @@ if (subcommand %in% c("hotspot", "main")) {
         local_pval_cutoff = script_args$local_pval,
         merge_distance = script_args$merge_distance
       )
-    n_hotspot <- if (is.null(hotspot_cpois)) 0 else nrow(hotspot_cpois)
+    if (is.null(hotspot_cpois)) {
+      # When no hotspots have been called
+      local({
+        fields <- c("chrom","start","end","name","z_score","score","pval","pval_adjust","pval_local","cov","score0")
+        fields %>% as.list() %>% data.table::as.data.table() %>% magrittr::set_colnames(fields) %>% filter(chrom != chrom)
+      }) -> hotspot_cpois
+    }
+    n_hotspot <- nrow(hotspot_cpois)
     logging::loginfo(str_interp("Called ${n_hotspot} hotspots using continuous Poisson model"))
   }
 
@@ -302,7 +309,14 @@ if (subcommand %in% c("hotspot", "main")) {
       local_pval_cutoff = script_args$local_pval,
       merge_distance = script_args$merge_distance
     )
-  n_hotspot <- if (is.null(hotspot_standard)) 0 else nrow(hotspot_standard)
+  if (is.null(hotspot_standard)) {
+    # When no hotspots have been called
+    local({
+      fields <- c("chrom","start","end","name","z_score","score","pval","pval_adjust","pval_local","cov","score0")
+      fields %>% as.list() %>% data.table::as.data.table() %>% magrittr::set_colnames(fields) %>% filter(chrom != chrom)
+    }) -> hotspot_standard
+  }
+  n_hotspot <- nrow(hotspot_standard)
   logging::loginfo(str_interp("Called ${n_hotspot} hotspots"))
 
   logging::loginfo("Writing results to disk ...")
@@ -335,15 +349,14 @@ if (subcommand %in% c("hotspot", "main")) {
     file_path = str_interp("${script_args$prefix}.ifs.bedGraph.gz"),
     create_index = TRUE
   )
-  if (!is.null(hotspot_standard)){
-    write_bed(
-      hotspot_standard,
-      file_path = str_interp("${script_args$prefix}.hotspot.bed.gz"),
-      create_index = TRUE
-    )
-  }
 
-  if (script_args$cpois && !is.null(hotspot_cpois)) {
+  write_bed(
+    hotspot_standard,
+    file_path = str_interp("${script_args$prefix}.hotspot.bed.gz"),
+    create_index = TRUE
+  )
+
+  if (script_args$cpois) {
     write_bed(
       hotspot_cpois,
       file_path = str_interp("${script_args$prefix}.hotspot.cpois.bed.gz"),
