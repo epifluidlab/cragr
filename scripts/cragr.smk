@@ -28,6 +28,7 @@ rule ifs:
         mem_mb=lambda wildcards, threads: threads * MEM_PER_CORE,
         time=WALL_TIME_MAX,
         time_min=300,
+        attempt=lambda wildcards, threads, attempt: attempt
     shell:
         """
         tmpdir=$(mktemp -d)
@@ -63,6 +64,7 @@ rule hotspot:
         mem_mb=lambda wildcards, threads: threads * MEM_PER_CORE,
         time=WALL_TIME_MAX,
         time_min=300,
+        attempt=lambda wildcards, threads, attempt: attempt
     shell:
         """
         tmpdir=$(mktemp -d)
