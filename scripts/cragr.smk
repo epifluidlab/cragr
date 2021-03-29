@@ -1,10 +1,13 @@
 # cragr pipeline
 
+localrules: all, merge
+
 # >>> Configuration >>>
 FULL_CORES = config.get("FULL_CORES", 16)
 PART_CORES = config.get("PART_CORES", 4)
 MEM_PER_CORE = config.get("MEM_PER_CORE", 1800)
 WALL_TIME_MAX = config.get("WALL_TIME_MAX", 2880)
+CORE_FACTOR = float(config.get("CORE_FACTOR", 1))
 
 # Default base directory for data files. Default: ./data
 DATA_DIR = config.get("DATA_DIR", os.path.abspath("data"))
@@ -20,7 +23,7 @@ rule ifs:
     log: "results/{sample}.chr{chrom}.ifs.raw.log"
     params:
         label=lambda wildcards: f"ifs.{wildcards.sample}.chr{wildcards.chrom}",
-    threads: lambda wildcards: 4 if wildcards.chrom in ["1", "2", "3", "4", "5", "6", "7"] else 2
+    threads: lambda wildcards, attempt: round(CORE_FACTOR * (4 if wildcards.chrom in ["1", "2", "3", "4", "5", "6", "7"] else 2) * attempt)
     resources:
         mem_mb=lambda wildcards, threads: threads * MEM_PER_CORE,
         time=WALL_TIME_MAX,
@@ -55,7 +58,7 @@ rule hotspot:
     log: "results/{sample}.chr{chrom}.hotspot.log"
     params:
         label=lambda wildcards: f"hotspot.{wildcards.sample}.chr{wildcards.chrom}",
-    threads: lambda wildcards: 4 if wildcards.chrom in ["1", "2", "3", "4", "5", "6", "7"] else 2
+    threads: lambda wildcards, attempt: round(CORE_FACTOR * (2 if wildcards.chrom in ["1", "2", "3", "4", "5", "6", "7"] else 1) * attempt)
     resources:
         mem_mb=lambda wildcards, threads: threads * MEM_PER_CORE,
         time=WALL_TIME_MAX,
