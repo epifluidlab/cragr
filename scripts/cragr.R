@@ -130,6 +130,7 @@ if (interactive()) {
         help = "Use continuous Poisson model to call hotspots"
       ),
       optparse::make_option(c("--fdr"), default = 0.01, help = "FDR cut-off value used in hotspot calling. Default is 0.01"),
+      optparse::make_option(c("--local-pval"), default = 1e-5, help = "Threshold for local p-values to call hotspots. Default is 1e-5"),
       optparse::make_option(
         c("--merge-distance"),
         action = "store",
@@ -278,17 +279,18 @@ if (subcommand %in% c("hotspot", "main")) {
 
   logging::loginfo("Calling hotspots ...")
 
-  pval_local_cutoff <- 1e-5
-
   if (script_args$cpois) {
     hotspot_cpois <-
       call_hotspot(
         ifs,
         use_cpois = TRUE,
         fdr_cutoff = script_args$fdr,
-        local_pval_cutoff = pval_local_cutoff,
+        pval_cutoff = script_args$local_pval,
+        local_pval_cutoff = script_args$local_pval,
         merge_distance = script_args$merge_distance
       )
+    n_hotspot <- if (is.null(hotspot_cpois)) 0 else nrow(hotspot_cpois)
+    logging::loginfo(str_interp("Called ${n_hotspot} hotspots using continuous Poisson model"))
   }
 
   hotspot_standard <-
@@ -296,9 +298,12 @@ if (subcommand %in% c("hotspot", "main")) {
       ifs,
       use_cpois = FALSE,
       fdr_cutoff = script_args$fdr,
-      local_pval_cutoff = pval_local_cutoff,
+      pval_cutoff = script_args$local_pval,
+      local_pval_cutoff = script_args$local_pval,
       merge_distance = script_args$merge_distance
     )
+  n_hotspot <- if (is.null(hotspot_standard)) 0 else nrow(hotspot_standard)
+  logging::loginfo(str_interp("Called ${n_hotspot} hotspots"))
 
   logging::loginfo("Writing results to disk ...")
   output_dir <- dirname(script_args$prefix)
@@ -325,17 +330,20 @@ if (subcommand %in% c("hotspot", "main")) {
   ws_ratio <- script_args$window_size %/% script_args$step_size
   ifs[, start := as.integer(round(start + (ws_ratio - 1) / 2 * script_args$step_size))][, end := as.integer(start + script_args$step_size)]
   write_bed(
-    ifs,
+    # Rearrage orders
+    ifs %>% relocate(c(z_score, score), .after = end) %>% select(-gc, -mappability),
     file_path = str_interp("${script_args$prefix}.ifs.bedGraph.gz"),
     create_index = TRUE
   )
-  write_bed(
-    hotspot_standard,
-    file_path = str_interp("${script_args$prefix}.hotspot.bed.gz"),
-    create_index = TRUE
-  )
+  if (!is.null(hotspot_standard)){
+    write_bed(
+      hotspot_standard,
+      file_path = str_interp("${script_args$prefix}.hotspot.bed.gz"),
+      create_index = TRUE
+    )
+  }
 
-  if (script_args$cpois) {
+  if (script_args$cpois && !is.null(hotspot_cpois)) {
     write_bed(
       hotspot_cpois,
       file_path = str_interp("${script_args$prefix}.hotspot.cpois.bed.gz"),

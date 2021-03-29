@@ -1,6 +1,6 @@
 Package: cragr
 Title: R package for CRAG
-Version: 0.1.1
+Version: 0.1.2
 Authors@R: 
     person(given = "Haizi",
            family = "Zheng",
@@ -24,7 +24,7 @@ Imports:
     purrr,
     stringr,
     here,
-    bedr (== 1.0.7.3),
+    bedr (== 1.0.7.4),
     zoo,
     optparse,
     Rcpp

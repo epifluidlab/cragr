@@ -10,6 +10,7 @@
 #'   Default is FALSE.
 #' @param stop_on_error Stop the script completely if the result is `FALSE`.
 #' @return Logical value. TRUE if all required binaries can be found in PATH.
+#' @export
 check_binaries <- function(binaries = "tabix", verbose = FALSE, stop_on_fail = FALSE) {
   check_results <- binaries %>% purrr::map_lgl(function(binary) {
     # check if binary is in path

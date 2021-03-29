@@ -8,6 +8,7 @@ call_hotspot(
   ifs,
   use_cpois = FALSE,
   fdr_cutoff = 0.01,
+  pval_cutoff = 1e-05,
   local_pval_cutoff = 1e-05,
   merge_distance = 200
 )

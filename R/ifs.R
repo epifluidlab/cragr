@@ -186,8 +186,21 @@ ifs_score <-
       rm(gc)
     }
 
-    ifs[]
+    # Calculate z-scores
+    .calc_ifs_z_score(ifs)
   }
+
+
+#' Calculate z-scores for the IFS
+.calc_ifs_z_score <- function(ifs) {
+  mad_factor <- 1.28
+  ifs[, z_score := {
+    score_median <- median(score)
+    score_mad <- mad(score, constant = mad_factor)
+    (score - score_median) / score_mad
+  }, by = chrom]
+  ifs
+}
 
 
 #' Perform GC-correction for IFS scores
@@ -197,12 +210,13 @@ ifs_score <-
 #' @param gc A `data.table` of GC contents.
 #' @param span `span` used in LOESS fit.
 #' @return A `data.table` containing GC-corrected IFS scores/
+#' @export
 .gc_correct <- function(ifs, gc, span = 0.75) {
   chrom <- as.character(unique(ifs$chrom))
   assertthat::are_equal(length(chrom), 1)
   assertthat::are_equal(chrom, as.character(unique(gc$chrom)))
 
-  check_binaries(stop_on_fail = TRUE)
+  check_binaries(binaries = "bedtools", stop_on_fail = TRUE)
   # Map GC to fragment BEDs
   gc <- bedr::bedr(method = "map",
                    input = list(a = ifs[, .(chrom, start, end)],
@@ -221,13 +235,32 @@ ifs_score <-
   gc[, chrom := factor(chrom, levels = levels(ifs$chrom))]
   data.table::setkey(gc, "chrom", "start", "end")
 
+  # Perform GC-correction for IFS score
   ifs <- ifs[gc, nomatch = 0][, `:=`(gc = i.score, i.score = NULL)]
-  ifs[, score0 := score]
-  ifs[score0 > 0, score := score0 - lowess(x = gc, y = score0, f = span)$y + mean(score0)]
+  data.table::setnames(ifs, "score", "score0")
 
-  # Also perform GC-correction for coverage
-  ifs[score > 0, cov_corrected := cov - lowess(x = gc, y = cov, f = span)$y + mean(cov)]
-  ifs[is.na(cov_corrected), cov_corrected := 0]
+  # Use all points
+  model <-
+    loess(
+      formula = score0 ~ gc,
+      data = ifs[score0 > 0][, .(gc, score0)],
+      control = loess.control(
+        surface = "interpolate",
+        statistics = "approximate",
+        trace.hat = "approximate"
+      )
+    )
+  ifs[score0 > 0, score := model$residuals + mean(score0)]
+
+  # train_data <- ifs[score0 > 0][1:20e3L, .(gc, score0)]
+  # model <- loess(formula = score0 ~ gc, data = train_data)
+  # ifs[score0 > 0, score := score0 - predict(model, newdata = gc) + mean(score0)]
+
+  ifs[score < 0, score := 0]
+
+  # # Also perform GC-correction for coverage
+  # ifs[score > 0, cov_corrected := cov - lowess(x = gc, y = cov, f = span)$y + mean(cov)]
+  # ifs[is.na(cov_corrected), cov_corrected := 0]
 
   # ifs[, .(chrom, start, end, score, cov, gc, score0)]
   ifs[]
@@ -591,6 +624,15 @@ calc_pois_pval <- function(ifs, cpois = FALSE, threshold = 1e-5) {
   # Standard Poisson model
   ifs[, pval := ppois(score, lambda = mean(score)), by = chrom]
 
+  # # Alternatively, use MAD-outlier detection
+  # ifs[, pval := {
+  #   score_median <- median_score
+  #   mad <- median(abs(score - score_median))
+  #   score_filtered <- score %>% discard(function(x) abs(x - score_median) > 3 * mad)
+  #   lambda <- mean(score_filtered)
+  #   ppois(score, lambda = lambda)
+  # }]
+
   # Only those pval <= threshld are used in p-value adjustment
   ifs[, pval_adjust := {
     # v <- ifelse(pval > threshold, 1, pval)
@@ -640,46 +682,47 @@ calc_pois_pval_local <- function(ifs, window_size, step_size, local_layout, cpoi
           results <- local_layout %>% map(function(local_width) {
             # local_width: may be 5000L or 10000L
             # Local means over the 5k/10k region
-            score_rollmean <- rollmean(
+            outer_sum <- rollsum(
               score,
               k = local_width %/% step_size,
               na_pad = TRUE,
               align = "center",
               na_rm = TRUE
             )
-            # score_rollmean <- zoo::rollmean(
-            #   score,
-            #   k = local_width %/% step_size,
-            #   fill = NA,
-            #   align = "center",
-            #   na.rm = TRUE
-            # )
+            inner_sum <- rollsum(
+              score,
+              k = window_size %/% step_size * 2,
+              na_pad = TRUE,
+              align = "center",
+              na_rm = TRUE
+            )
 
             # How many valid 200-bp windows in the 5k/10 rolling region?
-            rollcount <- rollsum(
+            outer_count <- rollsum(
               as.integer(!is.na(score)),
               k = local_width %/% step_size,
               na_pad = TRUE,
               align = "center"
             )
-            # rollcount <- zoo::rollapply(
-            #   score,
-            #   width = local_width %/% step_size,
-            #   fill = NA,
-            #   align = "center",
-            #   FUN = function(v)
-            #     sum(!is.na(v))
-            # )
+            inner_count <- rollsum(
+              as.integer(!is.na(score)),
+              k = window_size %/% step_size * 2,
+              na_pad = TRUE,
+              align = "center"
+            )
+            valid_count <- outer_count - inner_count
+            score_rollmean <- ifelse(!is.na(valid_count) & valid_count > 0, (outer_sum - inner_sum) / valid_count, NA)
 
-            # After calculating rollmean and rollcount, we can safely remove
+
+            # After calculating rollmean and valid_count, we can safely remove
             # rows with NA scores, which are dummy rows only for rolling
             # purposes
             score_rollmean <- score_rollmean[valid_score_idx]
-            rollcount <- rollcount[valid_score_idx]
+            valid_count <- valid_count[valid_score_idx]
             score <- score[valid_score_idx]
 
             # Only consider regions with sufficient ...
-            valid_roll_idx <- !is.na(rollcount) & (rollcount >= 30) & !is.na(score_rollmean)
+            valid_roll_idx <- !is.na(valid_count) & (valid_count >= 30) & !is.na(score_rollmean)
 
             results <- list()
             # By default, the p-value is 1
@@ -687,14 +730,14 @@ calc_pois_pval_local <- function(ifs, window_size, step_size, local_layout, cpoi
               rep(1, length(score_rollmean))
             results$pval[valid_roll_idx] <-
               ppois(score[valid_roll_idx], score_rollmean[valid_roll_idx])
-            results$pval[is.na(rollcount) | is.na(score_rollmean)] <- NA
+            results$pval[is.na(valid_count) | is.na(score_rollmean)] <- NA
 
             if (cpois) {
               results$pval_cpois <-
                 rep(1, length(score_rollmean))
               results$pval_cpois[valid_roll_idx] <-
                 pcpois(score[valid_roll_idx], score_rollmean[valid_roll_idx])
-              results$pval_cpois[is.na(rollcount) | is.na(score_rollmean)] <- NA
+              results$pval_cpois[is.na(valid_count) | is.na(score_rollmean)] <- NA
             }
 
             results
@@ -742,18 +785,23 @@ calc_pois_pval_local <- function(ifs, window_size, step_size, local_layout, cpoi
 
 #' Call hotspots based on pvalues (and merge)
 #' @export
-call_hotspot <- function(ifs, use_cpois = FALSE, fdr_cutoff = 0.01, local_pval_cutoff = 1e-5, merge_distance = 200) {
-  check_binaries(stop_on_fail = TRUE)
-  if (use_cpois) {
-    hotspot <- ifs[pval_cpois_adjust <= fdr_cutoff & pval_cpois_local <= local_pval_cutoff]
-  } else {
-    hotspot <- ifs[pval_adjust <= fdr_cutoff & pval_local <= local_pval_cutoff]
-  }
-
+call_hotspot <- function(ifs, use_cpois = FALSE, fdr_cutoff = 0.01, pval_cutoff = 1e-5, local_pval_cutoff = 1e-5, merge_distance = 200) {
+  check_binaries("bedtools", stop_on_fail = TRUE)
+  ifs <- ifs[, .(chrom, start, end, z_score, score, pval, pval_adjust, pval_local, cov, score0)]
   fields <- colnames(ifs)
 
-  merge_cols <- c("score", "cov", "score0", "cov_corrected", "mappability", "gc", "pval", "pval_adjust", "pval_local")
-  merge_stat <- c(rep("sum", 4), rep("mean", 2), rep("max", 3))
+  if (use_cpois) {
+    hotspot <- ifs[pval <= pval_cutoff & pval_cpois_adjust <= fdr_cutoff & pval_cpois_local <= local_pval_cutoff]
+  } else {
+    hotspot <- ifs[pval <= pval_cutoff & pval_adjust <= fdr_cutoff & pval_local <= local_pval_cutoff]
+  }
+  if (nrow(hotspot) == 0) {
+    # hotspot is empty
+    return(NULL)
+  }
+
+  merge_cols <- c("z_score", "score", "pval", "pval_adjust", "pval_local", "cov", "score0")
+  merge_stat <- c("mean", "mean", rep("max", 3), "mean", "mean")
 
   if ("pval_cpois" %in% colnames(ifs)) {
     merge_cols <- c(merge_cols, "pval_cpois", "pval_cpois_adjust", "pval_cpois_local")
@@ -777,7 +825,9 @@ call_hotspot <- function(ifs, use_cpois = FALSE, fdr_cutoff = 0.01, local_pval_c
     ) %>% data.table::as.data.table()
   data.table::setnames(hotspot, new = fields)
   data.table::setkey(hotspot, "chrom", "start", "end")
-  hotspot %>% mutate(name = ".") %>% relocate(name, .after = end)
+  hotspot[, {
+    c(.SD[, 1:3], list(name = "."), .SD[,-1:-3])
+  }]
 }
 
 
