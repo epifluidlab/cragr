@@ -228,27 +228,27 @@ ifs_score <-
   assertthat::are_equal(length(chrom), 1)
   assertthat::are_equal(chrom, as.character(unique(gc$chrom)))
 
-  check_binaries(binaries = "bedtools", stop_on_fail = TRUE)
-  # Map GC to fragment BEDs
-  gc <- bedr::bedr(method = "map",
-                   input = list(a = ifs[, .(chrom, start, end)],
-                                b = gc[, .(chrom, start, end, score)]),
-                   params = "-c 4 -o mean",
-                   check.chr = FALSE,
-                   check.zero.based = FALSE,
-                   check.valid = FALSE,
-                   check.sort = FALSE,
-                   check.merge = FALSE,
-                   verbose = FALSE,
-                   capture.output = "disk")
-
-  data.table::setDT(gc)
-  data.table::setnames(gc, c("chrom", "start", "end", "score"))
-  gc[, chrom := factor(chrom, levels = levels(ifs$chrom))]
+  # Implement this using foverlaps
+  ifs[, start := start + 1]
+  gc[, start := start + 1]
+  data.table::setkey(ifs, "chrom", "start", "end")
   data.table::setkey(gc, "chrom", "start", "end")
+  overlap_idx <-
+    data.table::foverlaps(gc,
+                          ifs,
+                          type = "any",
+                          which = TRUE,
+                          nomatch = NULL)
+  # x: gc, y: 200bp window
+  overlap_idx[, gc := gc[xid]$score]
+  overlap_idx[, gc := mean(gc), by = yid]
 
-  # Perform GC-correction for IFS score
-  ifs <- ifs[gc, nomatch = 0][, `:=`(gc = i.score, i.score = NULL)]
+  ifs[, start := start - 1]
+  gc[, start := start - 1]
+  data.table::setkey(ifs, "chrom", "start", "end")
+  data.table::setkey(gc, "chrom", "start", "end")
+  ifs <- ifs[overlap_idx$yid, gc := overlap_idx$gc]
+
   data.table::setnames(ifs, "score", "score0")
 
   # Use all points
@@ -284,29 +284,26 @@ ifs_score <-
   assertthat::are_equal(length(chrom), 1)
   assertthat::are_equal(chrom, as.character(unique(mappability$chrom)))
 
-  check_binaries(stop_on_fail = TRUE)
-  # Map mappability to fragment BEDs
-  mappability <- bedr::bedr(method = "map",
-                   input = list(a = ifs[, .(chrom, start, end)],
-                                b = mappability[, .(chrom, start, end, score)]),
-                   params = "-c 4 -o mean",
-                   check.chr = FALSE,
-                   check.zero.based = FALSE,
-                   check.valid = FALSE,
-                   check.sort = FALSE,
-                   check.merge = FALSE,
-                   verbose = FALSE,
-                   capture.output = "disk")
 
-  data.table::setDT(mappability)
-  data.table::setnames(mappability, c("chrom", "start", "end", "score"))
-  mappability[, chrom := factor(chrom, levels = levels(ifs$chrom))]
+  # Implement this using foverlaps
+  ifs[, start := start + 1]
+  mappability[, start := start + 1]
+  data.table::setkey(ifs, "chrom", "start", "end")
+  data.table::setkey(mappability, "chrom", "start", "end")
+  overlap_idx <- data.table::foverlaps(mappability, ifs, type = "any", which = TRUE)
+  # x: mappability, y: 200bp window
+  overlap_idx[, maps := mappability[xid]$score]
+  overlap_idx[, maps := mean(maps), by = yid]
+  # Only keep high-mappability regions
+  overlap_idx <- overlap_idx[maps >= mappability_threshold]
+
+  ifs[, start := start - 1]
+  mappability[, start := start - 1]
+  data.table::setkey(ifs, "chrom", "start", "end")
   data.table::setkey(mappability, "chrom", "start", "end")
 
-  ifs <- ifs[mappability, nomatch = 0][, `:=`(mappability = i.score, i.score = NULL)]
-  ifs <- ifs[mappability >= mappability_threshold]
-  # ifs[, .(chrom, start, end, score, cov, gc, mappability, score0)]
-  ifs[]
+  ifs <- ifs[overlap_idx$yid, mappability := overlap_idx$maps]
+  ifs[mappability >= mappability_threshold]
 }
 
 
@@ -386,56 +383,21 @@ ifs_score <-
 
     region <- region[, .(chrom, start, end)]
 
-    if (check_sort) {
-      # Make sure region is correctly sorted
-      chrom_list <- data.table::fread(chrom_sizes)[[1]]
-      region[, chrom := factor(chrom, levels = chrom_list)]
-      region <- region[order(chrom)]
-    }
+    # Implement this using foverlaps
+    dt[, start := start + 1]
+    region[, start := start + 1]
+    data.table::setkey(dt, "chrom", "start", "end")
+    data.table::setkey(region, "chrom", "start", "end")
+    overlap_idx <- data.table::foverlaps(dt, region, type = "any", which = TRUE)
+    # Only those do not overlap
+    overlap_idx <- overlap_idx[, flag := any(!is.na(yid)), by = xid][flag == FALSE, !c("flag")]
 
-    # After bedtools, the data types of some columns will change to character.
-    # We need to convert them back to their original types.
-    col_types <- map_chr(dt, typeof)
+    dt[, start := start - 1]
+    region[, start := start - 1]
+    data.table::setkey(dt, "chrom", "start", "end")
+    data.table::setkey(region, "chrom", "start", "end")
 
-    check_binaries(stop_on_fail = TRUE)
-    dt <- bedr::bedr(
-      method = "intersect",
-      params = paste0("-v -sorted -g ", chrom_sizes),
-      input = list(a = dt, b = region[,1:3]),
-      check.chr = FALSE,
-      check.zero.based = FALSE,
-      check.valid = FALSE,
-      check.sort = FALSE,
-      check.merge = FALSE,
-      verbose = FALSE,
-      capture.output = "disk"
-    )
-    data.table::setDT(dt)
-
-    # Convert back to numeric column types
-    col_types2 <- map_chr(dt, typeof)
-    fields <- colnames(dt)
-    for (idx in which((col_types == "integer") &
-                      (col_types != col_types2))) {
-      data.table::set(dt, j = idx, value = suppressWarnings(as.integer(dt[[idx]])))
-    }
-    for (idx in which((col_types == "double") &
-                      (col_types != col_types2))) {
-      data.table::set(dt, j = idx, value = suppressWarnings(as.numeric(dt[[idx]])))
-    }
-    for (idx in which((col_types == "character") &
-                      (col_types != col_types2))) {
-      data.table::set(dt, j = idx, value = suppressWarnings(as.character(dt[[idx]])))
-    }
-    for (idx in which((col_types == "logical") &
-                      (col_types != col_types2))) {
-      data.table::set(dt, j = idx, value = suppressWarnings(as.logical(dt[[idx]])))
-    }
-
-    chrom_list <- data.table::fread(chrom_sizes)[[1]]
-    dt[, chrom := factor(as.character(chrom), levels = chrom_list)]
-    data.table::setkeyv(dt, c("chrom", "start", "end"))
-    dt
+    dt[overlap_idx$xid]
   }
 
 
