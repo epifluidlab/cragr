@@ -51,7 +51,7 @@ if (interactive()) {
   # Run in CLI script mode
   parser <- optparse::OptionParser(
     option_list = list(
-      optparse::make_option(c("--input"), help = "Path to the inpuut file"),
+      optparse::make_option(c("--input"), help = "Path to the inpuut file. If there are multiple input files, they should be separated by colons"),
       # Can be either "frag" or "ifs"
       # optparse::make_option(
       #   c("--input-type"),
@@ -151,6 +151,10 @@ if (interactive()) {
   library(cragr)
 
   # Process arguments
+  if ("input" %in% names(script_args)) {
+    script_args$input <- str_split(script_args$input, pattern = ":")[[1]]
+  }
+
   if (!("chrom" %in% names(script_args)))
     script_args$chrom <- NULL
   # if (is_null(script_args$chrom_sizes))
@@ -200,18 +204,21 @@ names(script_args) %>%
 if (subcommand %in% c("ifs", "main")) {
   logging::loginfo("Input: fragment data")
 
-  logging::loginfo(str_interp("Loading fragments: ${script_args$input}"))
-  if (!is_null(script_args$chrom)) {
-    frag <-
-      load_fragments(script_args$input, region = script_args[["chrom"]])
-  } else {
-    frag <- load_fragments(script_args$input)
-  }
+  frag <- script_args$input %>% map(function(input_file) {
+    logging::loginfo(str_interp("Loading fragments: ${input_file} ..."))
+    if (!is_null(script_args$chrom)) {
+      frag <-
+        load_fragments(input_file, region = script_args[["chrom"]])
+    } else {
+      frag <- load_fragments(input_file)
+    }
 
-  if (!is_null(script_args$exclude_chrom)) {
-    frag <- frag[!(chrom %in% script_args$exclude_chrom)]
-  }
+    if (!is_null(script_args$exclude_chrom)) {
+      frag <- frag[!(chrom %in% script_args$exclude_chrom)]
+    }
 
+    frag
+  }) %>% data.table::rbindlist()
 
   logging::loginfo("Fragments summary:")
   print(rbind(frag[, .(count = length(start)), by = chrom], list(
