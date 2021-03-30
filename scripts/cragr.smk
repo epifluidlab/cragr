@@ -12,6 +12,26 @@ CORE_FACTOR = float(config.get("CORE_FACTOR", 1))
 # Default base directory for data files. Default: ./data
 DATA_DIR = config.get("DATA_DIR", os.path.abspath("data"))
 
+
+def determine_ifs_cores(chrom, factor=1):
+    if chrom == "X":
+        cores = 6
+    elif chrom == "Y":
+        cores = 3
+    else:
+        chrom = int(chrom)
+        if chrom >= 1 and chrom <= 7:
+            cores = 6
+        elif chrom >= 8 and chrom <= 15:
+            cores = 4
+        elif chrom >= 16 and chrom <= 22:
+            cores = 3
+        else:
+            raise ValueError
+
+    return round(factor * cores)
+
+
 rule ifs:
     input: 
         frag="frag/{sample}.hg19.frag.bed.gz",
@@ -23,7 +43,7 @@ rule ifs:
     log: "results/{sample}.chr{chrom}.ifs.raw.log"
     params:
         label=lambda wildcards: f"ifs.{wildcards.sample}.chr{wildcards.chrom}",
-    threads: lambda wildcards, attempt: round(CORE_FACTOR * (4 if wildcards.chrom in ["1", "2", "3", "4", "5", "6", "7"] else 2) * attempt)
+    threads: lambda wildcards, attempt: round(determine_ifs_cores(wildcards.chrom, CORE_FACTOR) * (1 + 0.5 * attempt))
     resources:
         mem_mb=lambda wildcards, threads: threads * MEM_PER_CORE,
         time=WALL_TIME_MAX,
@@ -59,7 +79,7 @@ rule hotspot:
     log: "results/{sample}.chr{chrom}.hotspot.log"
     params:
         label=lambda wildcards: f"hotspot.{wildcards.sample}.chr{wildcards.chrom}",
-    threads: lambda wildcards, attempt: round(CORE_FACTOR * (2 if wildcards.chrom in ["1", "2", "3", "4", "5", "6", "7"] else 1) * attempt)
+    threads: lambda wildcards, attempt: round(determine_ifs_cores(wildcards.chrom, CORE_FACTOR) * (1 + 0.5 * attempt) * 0.667)
     resources:
         mem_mb=lambda wildcards, threads: threads * MEM_PER_CORE,
         time=WALL_TIME_MAX,
@@ -134,7 +154,11 @@ rule merge:
         mv {output.hotspot_idx}.tmp {output.hotspot_idx}
         """
 
-sample_ids, = glob_wildcards("frag/{sample}.hg19.frag.bed.gz")
+sample_ids, = glob_wildcards("frag/{sample,Pilot2.+}.hg19.frag.bed.gz")
+# Head & neck cancer samples
+responder_ids = [12, 25, 36, 39, 68, 78, 80, 82]
+non_responder_ids = [1, 3, 6, 9, 14, 16, 22, 28, 30 ,34, 42, 45, 63, 65, 71, 75, 86, 89]
+sample_ids = responder_ids + non_responder_ids
 
 rule all:
-    input: expand("results/{sample}.ifs.bedGraph.gz", sample = sample_ids)
+    input: expand("results/Pilot2-{sample}.ifs.bedGraph.gz", sample = sample_ids)
