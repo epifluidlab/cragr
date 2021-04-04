@@ -276,6 +276,14 @@ ifs_score <-
 
   ifs[score < 0, score := 0]
 
+
+  # In rare cases, GC-corrected scores can be NA. Don't know why.
+  # Here we drop out any of those
+  na_score_idx <- ifs[, is.na(score)]
+  if (any(na_score_idx)) {
+    logging::logwarn(str_interp("Excluded ${sum(na_score_idx)} records with NA scores"))
+    ifs <- ifs[!na_score_idx]
+  }
   logging::loginfo("Finished performing GC correction")
 
   # # Also perform GC-correction for coverage

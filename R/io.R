@@ -258,7 +258,10 @@ load_fragments <-
 #' @export
 write_bed <- function(dt, file_path, col_names = TRUE, create_index = FALSE, ...) {
   is_gzipped <- endsWith(file_path, ".gz")
-  scipen <- 999
+  scipen <- 0
+
+  # make sure start and end are integers
+  dt[, `:=`(start = as.integer(start), end = as.integer(end))]
 
   if (col_names == TRUE) {
     fields <- colnames(dt)
