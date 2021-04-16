@@ -57,18 +57,6 @@ NumericVector rollapply(NumericVector x, int k, double (*func)(NumericVector, in
 
   for (int i = start; i < end; ++i) {
     double v = func(x, i - shift_l, k, na_rm);
-    // double total = 0;
-    // for (int j = i - shift_l; j < i - shift_l + k; ++j) {
-    //   if (NumericVector::is_na(x[j])) {
-    //     if (na_rm) {
-    //       continue;
-    //     } else {
-    //       total = NA_REAL;
-    //       break;
-    //     }
-    //   }
-    //   total += x[j];
-    // }
     out[i] = v;
   }
 
