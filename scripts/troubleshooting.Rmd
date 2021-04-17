@@ -8,8 +8,6 @@ knitr::opts_knit$set(root.dir = normalizePath("."))
 knitr::opts_chunk$set(eval = FALSE, cache.comments = FALSE, collapse = TRUE)
 ```
 
-
-
 ```{r}
 # Modify XH's code to output intermediate files. Used for troubleshooting: why my results are different from XH's?
 
@@ -93,7 +91,6 @@ ifs_new <- cragr::.ifs_score_feed_raw(tmp2, chrom=tmp2$chrom[1], gc = gc, mappab
 xh_raw_ifs_v1[, .(chrom = "21", start, end, score)]
 ```
 
-
 Compare XH's gc/maps with mine
 
 ```{r}
@@ -104,8 +101,7 @@ my_region_chr21[, 1:9][ifs_new][abs(gc-i.gc)>1e-5]
 my_region_chr21[, 1:9][ifs_new][abs(mappability - maps)>1e-5]
 ```
 
-GC: not consistent
-Mappability: consistent
+GC: not consistent Mappability: consistent
 
 Why? Check the original GC file.
 
@@ -211,7 +207,6 @@ YES!
 
 Is my result consistent with XH's?
 
-
 ```{r}
 ifs_new <- cragr::calc_pois_pval_local(ifs_new, window_size = 200L, step_size = 20L, local_layout = list(`5k`=5e3L, `10k`=10e3L))
 ifs_new[region_chr21, nomatch=0]
@@ -263,7 +258,6 @@ ifs_new[final_region, nomatch=0][pmax(pval_local, i.pval_local) < 1][, .(pval_lo
 ifs_new[region_chr21, nomatch=0][, .(pval, `p-val`)] %>% cor()
 ```
 
-
 Re-examine the GC-correction:
 
 ```{r}
@@ -274,11 +268,9 @@ gc_correction[, .(delta = v-score, score0)] %>% slice_sample(n = 10e3L) %>%
   ggplot(aes(x = score0, y = delta)) + geom_point(size = 0.2) + xlim(0, 50)
 ```
 
-
 ```{r}
 region_chr21[flag==1, .(score, score0, gc)][, v := loess(formula = score0 ~ gc, data = .SD, control = loess.control(surface = "interpolate", statistics = "approximate", trace.hat = "approximate"))$residuals + mean(score0)][]
 ```
-
 
 ```{r}
 gc_correction %>% pivot_longer(cols = c(score, v)) %>%
@@ -286,11 +278,9 @@ gc_correction %>% pivot_longer(cols = c(score, v)) %>%
   ggplot(aes(x = gc, y = value, color = name)) + geom_point(size = 0.2, alpha = 0.5)
 ```
 
-
 ```{r}
 gc_correction[, cor(score, v)]
 ```
-
 
 Use XH's raw IFS score and retry
 
@@ -310,7 +300,6 @@ ifs_new <- calc_pois_pval_local(ifs_new, window_size = 200L, step_size = 20L, lo
 ifs_new[final_region, nomatch=0][pmax(pval_local, i.pval_local) < 1][, .(pval_local, i.pval_local)][, .(x = -log10(pval_local), y = -log10(i.pval_local))] %>%
   ggplot(aes(x = x, y = y)) + geom_point(size = 0.3, alpha = 0.5)
 ```
-
 
 ## p-value calculation
 
@@ -336,9 +325,8 @@ ifs_new[final_region, nomatch=0][, .(pval_local, i.pval_local)] %>% na.omit() %>
   scale_x_log10() + scale_y_log10()
 ```
 
-
-
 Load XH's peaks
+
 ```{r}
 xh_peak <- data.table::fread("../sandbox/xh_intermediate/batch2_s_res_peaks.bed.gz")
 data.table::setnames(xh_peak, old = colnames(xh_peak)[1:3], new = c("chrom", "start", "end"))
@@ -348,8 +336,6 @@ data.table::setkey(xh_peak, "chrom", "start", "end")
 
 xh_peak
 ```
-
-
 
 ```{r}
 my_peak <- call_hotspot(ifs_new)
@@ -424,8 +410,6 @@ ifs_new <- cragr::calc_pois_pval(ifs_new)
 ifs_new <- cragr::calc_pois_pval_local(ifs_new, window_size = 200L, step_size = 20L, local_layout = list(`5k`=5e3L, `10k`=10e3L))
 ```
 
-
-
 ```{r}
 ifs_new[final_region, nomatch=0][, .(x = pval_local, y = i.pval_local)] %>% na.omit() %>%
   ggplot(aes(x = x, y = y)) + geom_point(size = 0.2) + 
@@ -438,7 +422,6 @@ overlapped(my_peak, xh_peak)
 ```
 
 Not very likely. Is the hotspot call very sensitive to GC-corrected scores? Let's try.
-
 
 ```{r}
 ifs_new <- region_chr21[flag==1, .(chrom = factor("21"), start, end, score = score0)]
@@ -478,7 +461,6 @@ my_peak2 <- call_hotspot(ifs_new2)
 overlapped(my_peak1, my_peak2)
 ```
 
-
 ## Try other GC-correction
 
 Prepare dataset
@@ -494,7 +476,6 @@ ifs_new[region_chr21[flag==1]][, .(score, i.score)] %>%
 ```
 
 Try other loess packages
-
 
 ```{r}
 library(reticulate)
@@ -518,8 +499,6 @@ ifs_new[, score_p := py$score_p]
 ifs_new[region_chr21[flag==1]][, .(score, score_r, score_p)] %>% cor(use = "complete.obs")
 ```
 
-
-
 ```{r}
 local({
   result <- lowess(ifs_new$gc, ifs_new$score0, f = 0.75)
@@ -533,7 +512,6 @@ ifs_new
 ifs_new[, score_p := py$score_p]
 ifs_new[region_chr21[flag==1]][, .(score, score_p, i.score)] %>% slice_sample(n=100)# %>% cor()
 ```
-
 
 ```{r}
 ifs_new[region_chr21[flag==1]][, .(score, score_p, i.score)] %>% 
@@ -562,7 +540,6 @@ region_chr21[flag == 1, .(score0, score_m2, score_r2 = model$residuals + mean(sc
 
 
 ```
-
 
 ```{r}
 
@@ -624,8 +601,6 @@ ifs_new[final_region, nomatch = 0][, .(x=pval_local, y=i.pval_local)] %>%
   ggplot(aes(x = x, y = y)) + geom_point(size = 0.2) + scale_x_log10() + scale_y_log10()
 ```
 
-
-
 ```{r}
 my_peak <- call_hotspot(ifs_new)
 overlapped(my_peak, xh_peak)
@@ -633,11 +608,9 @@ overlapped(my_peak, xh_peak)
 write_bed(my_peak, "../sandbox/xh_intermediate/my_peak.bed.gz")
 ```
 
-
 ## Wrap up
 
-IFS scores calculated by me and 
-
+IFS scores calculated by me and
 
 ```{r}
 ifs_new <- data.table::copy(my_region_chr21[, .(chrom, start, end, score = score0, cov, mappability)])
@@ -653,8 +626,6 @@ ifs_new[region_chr21[flag==1], nomatch=0][, .(x = score, y = i.score)] %>%
   slice_sample(n = 10e3L) %>%
   ggplot(aes(x = x, y = y)) + geom_point(size = 0.2) 
 ```
-
-
 
 ```{r}
 ifs_new <- cragr::calc_pois_pval(ifs_new)
@@ -710,10 +681,10 @@ haizi_ifs_pilot2_1_chr21 <- haizi_ifs_pilot2_1_chr21[, ]
 
 Here we'd like to wrap up and consider 4 scenarios:
 
-* Merged: using my IFS scores
-* Merged: using XH's IFS scores
-* Pilot2-1: using my IFS scores
-* Pilot2-1: using XH's IFS scores
+-   Merged: using my IFS scores
+-   Merged: using XH's IFS scores
+-   Pilot2-1: using my IFS scores
+-   Pilot2-1: using XH's IFS scores
 
 Load XH's data
 
@@ -754,8 +725,6 @@ data.table::setkey(xh_peak, "chrom", "start", "end")
 
 xh_peak
 ```
-
-
 
 ```{r}
 my_region <- cragr::load_bed("../sandbox/xh_intermediate/test_ifs_chr21.bedGraph.gz")[, .(chrom, start, end, score = score0)]
@@ -833,7 +802,6 @@ ifs <- region_chr21[flag == 1, .(chrom, start, end, score)]
 data.table::setkey(ifs, "chrom", "start", "end")
 ```
 
-
 ```{r}
 ifs <- cragr::calc_pois_pval(ifs)
 ifs <- cragr::calc_pois_pval_local(ifs, window_size = 200L, step_size = 20L, local_layout = list(`5k`=5e3L, `10k`=10e3L))
@@ -884,7 +852,6 @@ ifs[region_chr21[flag==1]][, .(x = score, y = i.score)] %>%
 ifs[region_chr21[flag==1]][, .(x = score, y = i.score)][, summary(x - y)]
 ```
 
-
 ```{r}
 ifs <- cragr::calc_pois_pval(ifs)
 ifs <- cragr::calc_pois_pval_local(ifs, window_size = 200L, step_size = 20L, local_layout = list(`5k`=5e3L, `10k`=10e3L))
@@ -928,7 +895,6 @@ ifs <- cragr::calc_pois_pval_local(ifs, window_size = 200L, step_size = 20L, loc
 my_peak <- cragr::call_hotspot(ifs)
 ```
 
-
 ```{r}
 ifs <- region_chr21[flag == 1, .(chrom, start, end, score = score0, gc)]
 data.table::setkey(ifs, "chrom", "start", "end")
@@ -956,7 +922,6 @@ ifs <- cragr::calc_pois_pval_local(ifs, window_size = 200L, step_size = 20L, loc
 my_peak2 <- cragr::call_hotspot(ifs)
 overlapped(my_peak, my_peak2)
 ```
-
 
 ### Scenario 2d, use XH's GC%, exclude outliers
 
@@ -993,7 +958,6 @@ ifs[region_chr21[flag==1]][, .(x = score, y = i.score)] %>%
 ```{r}
 ifs[region_chr21[flag==1]][, .(x = score, y = i.score)][, summary(x - y)]
 ```
-
 
 ```{r}
 ifs <- cragr::calc_pois_pval(ifs)
@@ -1068,7 +1032,6 @@ my_ifs <- ifs
 my_ifs
 ```
 
-
 ```{r}
 my_ifs[region_chr21[flag == 1]][, .(x = score, y = i.score)] %>%
   slice_sample(n = 10e3L) %>% na.omit() %>%
@@ -1108,4 +1071,3 @@ my_ifs[final_region, nomatch = 0][, .(x=pval_local, y=i.pval_local)] %>%
 my_peak <- cragr::call_hotspot(my_ifs)
 overlapped(my_peak, xh_peak)
 ```
-

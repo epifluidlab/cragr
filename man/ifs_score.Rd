@@ -9,11 +9,9 @@ ifs_score(
   chrom = NULL,
   window_size = 200L,
   step_size = 20L,
-  gc = NULL,
+  gc_correct = TRUE,
   blacklist_region = NULL,
   mappability_region = NULL,
-  mappability_threshold = 0.9,
-  chrom_sizes = system.file("extdata", "human_g1k_v37.chrom.sizes", package = "cragr"),
   min_mapq = 30L,
   min_fraglen = 50L,
   max_fraglen = 1000L,
@@ -30,8 +28,7 @@ chromosomes in \code{fragment_data} will be used.}
 
 \item{step_size}{Incremental steps of the sliding window.}
 
-\item{gc}{A \code{data.table} or character vector indicating the G+C\% track. If
-\code{NULL}, do not perform GC-correction.}
+\item{gc_correct}{Logical value. Whether to perform GC correction.}
 
 \item{blacklist_region}{Those fragments whose midpoint fall within any of the
 excluded regions will not be used in the analysis. \code{blacklist_region} can
@@ -41,11 +38,6 @@ the regions (should be in BED format), a \code{data.table} object, or a list of
 
 \item{mappability_region}{A \code{data.table} object of mappability scores, or a
 character vector of the mappability score file path.}
-
-\item{mappability_threshold}{The mappability score threshold, below which the
-region is considered as low-mappability and excluded from analysis.}
-
-\item{chrom_sizes}{Path to the chromosome size file.}
 
 \item{min_mapq}{Exclude fragments whose \code{MAPQ} scores are smaller than \code{min_mapq}.}
 
@@ -57,6 +49,12 @@ region is considered as low-mappability and excluded from analysis.}
 inferred lengths are less reliable. If \code{TRUE}, such fragments will be
 excluded from the analysis. \code{cigar1} and \code{cigar2} should be present in the
 dataset.}
+
+\item{gc}{A \code{data.table} or character vector indicating the G+C\% track. If
+\code{NULL}, do not perform GC-correction.}
+
+\item{mappability_threshold}{The mappability score threshold, below which the
+region is considered as low-mappability and excluded from analysis.}
 }
 \description{
 Calculate IFS scores

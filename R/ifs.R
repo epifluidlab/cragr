@@ -1,100 +1,35 @@
-#' Calculate IFS scores
-#'
-#' @param fragment_data A `data.table` containing cfDNA fragment data.
-#' @param chrom Calculate IFS scores for certain chromosomes. If `NULL`, all
-#'   chromosomes in `fragment_data` will be used.
-#' @param window_size Width of the sliding window. Must be multiples of `step_size`.
-#' @param step_size Incremental steps of the sliding window.
-#' @param gc A `data.table` or character vector indicating the G+C% track. If
-#'   `NULL`, do not perform GC-correction.
-#' @param blacklist_region Those fragments whose midpoint fall within any of the
-#'   excluded regions will not be used in the analysis. `blacklist_region` can
-#'   be either a character vector that contains the names of the files defining
-#'   the regions (should be in BED format), a `data.table` object, or a list of
-#'   `data.table` objects.
-#' @param mappability_region A `data.table` object of mappability scores, or a
-#'   character vector of the mappability score file path.
-#' @param mappability_threshold The mappability score threshold, below which the
-#'   region is considered as low-mappability and excluded from analysis.
-#' @param chrom_sizes Path to the chromosome size file.
-#' @param min_mapq Exclude fragments whose `MAPQ` scores are smaller than `min_mapq`.
-#' @param min_fraglen Exclude fragments shorter than `min_fraglen`.
-#' @param max_fraglen Exclude fragments longer than `max_fraglen`.
-#' @param exclude_soft_clipping For fragments with leading soft clipping, their
-#'   inferred lengths are less reliable. If `TRUE`, such fragments will be
-#'   excluded from the analysis. `cigar1` and `cigar2` should be present in the
-#'   dataset.
-#' @export
-ifs_score <-
+preprocess_fragment <-
   function(fragment_data,
-           chrom = NULL,
-           window_size = 200L,
-           step_size = 20L,
-           gc = NULL,
-           blacklist_region = NULL,
-           mappability_region,
-           mappability_threshold = 0.9,
-           chrom_sizes = system.file("extdata", "human_g1k_v37.chrom.sizes", package = "cragr"),
-           min_mapq = 30L,
-           min_fraglen = 50L,
-           max_fraglen = 1000L,
-           exclude_soft_clipping = FALSE) {
-    assertthat::are_equal(window_size %% step_size, 0)
-    assertthat::assert_that(!is.null(mappability_region))
-    if (is.null(chrom)) {
-      chrom <- as.character(unique(fragment_data$chrom))
-    } else {
-      chrom <- as.character(chrom)
-    }
+           chrom,
+           min_mapq,
+           min_fraglen,
+           max_fraglen,
+           exclude_soft_clipping,
+           blacklist_region) {
+    stopifnot(length(chrom) == 1)
 
-    if (length(chrom) > 1) {
-      # For multiple chromosomes, sequentially
-      ifs <-
-        data.table::rbindlist(lapply(chrom, function(chrom) {
-          ifs_score(
-            fragment_data,
-            chrom = chrom,
-            window_size = window_size,
-            step_size = step_size,
-            gc = gc,
-            blacklist_region = blacklist_region,
-            mappability_region = mappability_region,
-            mappability_threshold = mappability_threshold,
-            chrom_sizes = chrom_sizes,
-            min_mapq = min_mapq,
-            min_fraglen = min_fraglen,
-            max_fraglen = max_fraglen,
-            exclude_soft_clipping = exclude_soft_clipping
-          )
-        }))
-      data.table::setkeyv(ifs, c("chrom", "start", "end"))
-      return(ifs)
-    }
-
-    chrom0 <- chrom
-    fragment_data <- fragment_data[chrom == chrom0]
-    rm(chrom0)
+    fragment_data <-
+      keepSeqlevels(fragment_data, chrom, pruning.mode = "coarse")
 
     # Apply filters
     if (min_mapq > 0)
-      fragment_data <- fragment_data[mapq >= min_mapq]
+      fragment_data <- fragment_data[fragment_data$mapq >= min_mapq]
 
-    fragment_data[, length := end - start]
     min_fraglen <- min_fraglen %||% 0
     max_fraglen <- max_fraglen %||% Inf
-    fragment_data <- fragment_data[between(length, min_fraglen, max_fraglen)]
+    fragment_data <-
+      fragment_data[between(width(fragment_data), min_fraglen, max_fraglen)]
 
-    if (exclude_soft_clipping)
-      fragment_data <- fragment_data[!str_detect(cigar1, "^[0-9]+S") & !str_detect(cigar2, "[0-9]+S$")]
+    if (exclude_soft_clipping &&
+        all(c("cigar1", "cigar2") %in% colnames(mcols(fragment_data))))
+      fragment_data <-
+      fragment_data[!str_detect(fragment_data$cigar1, "^[0-9]+S") &
+                      !str_detect(fragment_data$cigar2, "[0-9]+S$")]
 
     # Exclude fragments from certain regions
     excluded_regions <-
-      .build_exclude_region(
-        chrom = chrom,
-        blacklist_region = blacklist_region
-        # mappability_region = mappability_region,
-        # mappability_threshold = mappability_threshold
-      )
+      build_exclude_region(chrom = chrom,
+                            blacklist_region = blacklist_region)
 
     # Each fragment is characterized by the midpoint rather than the start-end pair
     #
@@ -111,153 +46,228 @@ ifs_score <-
     # 26124:    22 51243190 51243191   46    116 51243132
     # 26125:    22 51243212 51243213   45    133 51243146
     # 26126:    22 51243198 51243199   47    103 51243147
-    fragment_data <-
-      fragment_data[
-        , .(chrom, start, end, mapq, length)
-      ][, `:=`(
-        midpoint = round((start + end) / 2),
-        frag_s = start)][
-          , `:=`(start = midpoint,
-                 end = midpoint + 1,
-                 midpoint = NULL)
-        ]
-    data.table::setkeyv(fragment_data, c("chrom", "start", "end"))
-
+    fragment_data$frag_s <- start(fragment_data)
+    fragment_data$length <- width(fragment_data)
+    midpoint = round((start(fragment_data) + end(fragment_data)) / 2)
+    start(fragment_data) <- midpoint
+    width(fragment_data) <- 1
 
     # Exclude dark regions
     logging::loginfo("Excluding blacklist regions ...")
     if (!is.null(excluded_regions)) {
       fragment_data <-
-        .exclude_region(
-          fragment_data,
-          region = excluded_regions,
-          # check_sort = TRUE,
-          chrom_sizes = chrom_sizes
-        )
+        fragment_data[-queryHits(findOverlaps(fragment_data, excluded_regions))]
     }
 
+    fragment_data
+  }
 
-    # Get coverage and calcuate IFS score for each 20bp (step-size) window
-    logging::loginfo("Calculating raw IFS scores ...")
-    fragment_data[, window_id := start %/% step_size]
-    avg_len <- mean(fragment_data$length)
-    ifs <-
-      fragment_data[,
-                    .(chrom = chrom[1],
-                      cov = .N,
-                      len_sum = sum(length, na.rm = TRUE)),
-                    by = .(window_id)]
-    rm(fragment_data)
 
-    ifs[, `:=`(
-      score = cov + len_sum / avg_len,
-      start = window_id * step_size,
-      end = (window_id + 1) * step_size
-    )]
-    ifs <- ifs[, .(chrom, start, end, score, cov)]
-    data.table::setkeyv(ifs, c("chrom", "start", "end"))
+calculate_raw_ifs <- function(fragment_data, window_size, step_size) {
+  # Get coverage and calcuate IFS score for each 20bp (step-size) window
+  logging::loginfo("Calculating raw IFS scores ...")
 
-    # Perform rolling sum over the sliding windows, therefore we have results
-    # for rolling windows (200bp, window_size) at step size of (20bp, step_size)
-    ifs <-
-      .slide_window(
-        ifs,
-        window_size = window_size,
-        step_size = step_size,
-        chrom_sizes = chrom_sizes
+  # Here we need do grouping and aggregating.
+  # It seems data.table is way faster
+  fragment_data$window_id <- (start(fragment_data) - 1) %/% step_size
+
+  fragment_data <- bedtorch::as.bedtorch_table(fragment_data)
+  avg_len <- mean(fragment_data$length)
+  ifs <- fragment_data[,
+                       .(chrom = chrom[1],
+                         start = window_id * step_size,
+                         end = (window_id + 1) * step_size,
+                         score = .N + sum(length, na.rm = TRUE) / avg_len,
+                         cov = .N),
+                       by = window_id][, window_id := NULL]
+  ifs %<>%
+    bedtorch::as.bedtorch_table(genome = attr(fragment_data, "genome"))
+  rm(fragment_data)
+  data.table::setkeyv(ifs, c("chrom", "start", "end"))
+
+  # Perform rolling sum over the sliding windows, therefore we have results
+  # for rolling windows (200bp, window_size) at step size of (20bp, step_size)
+  ifs <-
+    slide_window(
+      ifs,
+      window_size = window_size,
+      step_size = step_size
+    )
+}
+
+
+#' Calculate IFS scores
+#'
+#' @param fragment_data A `data.table` containing cfDNA fragment data.
+#' @param chrom Calculate IFS scores for certain chromosomes. If `NULL`, all
+#'   chromosomes in `fragment_data` will be used.
+#' @param window_size Width of the sliding window. Must be multiples of `step_size`.
+#' @param step_size Incremental steps of the sliding window.
+#' @param gc A `data.table` or character vector indicating the G+C% track. If
+#'   `NULL`, do not perform GC-correction.
+#' @param gc_correct Logical value. Whether to perform GC correction.
+#' @param blacklist_region Those fragments whose midpoint fall within any of the
+#'   excluded regions will not be used in the analysis. `blacklist_region` can
+#'   be either a character vector that contains the names of the files defining
+#'   the regions (should be in BED format), a `data.table` object, or a list of
+#'   `data.table` objects.
+#' @param mappability_region A `data.table` object of mappability scores, or a
+#'   character vector of the mappability score file path.
+#' @param mappability_threshold The mappability score threshold, below which the
+#'   region is considered as low-mappability and excluded from analysis.
+#' @param min_mapq Exclude fragments whose `MAPQ` scores are smaller than `min_mapq`.
+#' @param min_fraglen Exclude fragments shorter than `min_fraglen`.
+#' @param max_fraglen Exclude fragments longer than `max_fraglen`.
+#' @param exclude_soft_clipping For fragments with leading soft clipping, their
+#'   inferred lengths are less reliable. If `TRUE`, such fragments will be
+#'   excluded from the analysis. `cigar1` and `cigar2` should be present in the
+#'   dataset.
+#' @export
+ifs_score <-
+  function(fragment_data,
+           chrom = NULL,
+           window_size = 200L,
+           step_size = 20L,
+           gc_correct = TRUE,
+           blacklist_region = NULL,
+           mappability_region = NULL,
+           min_mapq = 30L,
+           min_fraglen = 50L,
+           max_fraglen = 1000L,
+           exclude_soft_clipping = FALSE) {
+    assertthat::are_equal(window_size %% step_size, 0)
+    assertthat::assert_that(!is.null(mappability_region))
+
+    if (is.null(chrom)) {
+      chrom <- as.character(unique(seqnames(fragment_data)))
+    } else {
+      chrom <- as.character(chrom)
+    }
+
+    if (length(chrom) > 1) {
+      # For multiple chromosomes, sequentially
+      ifs <-
+        chrom %>% map(function(chrom) {
+          ifs_score(
+            fragment_data,
+            chrom = chrom,
+            window_size = window_size,
+            step_size = step_size,
+            gc_correct = gc_correct,
+            blacklist_region = blacklist_region,
+            mappability_region = mappability_region,
+            min_mapq = min_mapq,
+            min_fraglen = min_fraglen,
+            max_fraglen = max_fraglen,
+            exclude_soft_clipping = exclude_soft_clipping
+          )
+        }) %>%
+        do.call(c, args = .)
+      return(ifs)
+    }
+
+    fragment_data <-
+      preprocess_fragment(
+        fragment_data,
+        chrom = chrom,
+        min_mapq = min_mapq,
+        min_fraglen = min_fraglen,
+        max_fraglen = max_fraglen,
+        exclude_soft_clipping = exclude_soft_clipping,
+        blacklist_region = blacklist_region
       )
+
+    ifs <- calculate_raw_ifs(fragment_data, window_size = window_size, step_size = step_size)
+    ifs <- bedtorch::as.GenomicRanges(ifs)
 
     # Exclude low-mappability regions
     logging::loginfo("Excluding low mappability regions ...")
     if (!is_null(mappability_region)) {
-      if (is_character(mappability_region)) {
-        mappability_region <- load_bed(mappability_region, region = chrom)
+      if (is.character(mappability_region)) {
+        mappability_region <- bedtorch::read_bed(mappability_region, range = chrom)
       } else {
-        chrom0 <- chrom
-        mappability_region <- mappability_region[chrom == chrom0]
-        rm(chrom0)
+        mappability_region <-
+          keepSeqlevels(mappability_region, chrom, pruning.mode = "coarse")
       }
 
-      ifs <- .exclude_low_mappability(ifs, mappability = mappability_region, mappability_threshold = mappability_threshold)
+      # Intervals in ifs and mappability_region should be exactly matched (200bp window)
+      ifs <- ifs[queryHits(findOverlaps(ifs, mappability_region, type = "equal"))]
       rm(mappability_region)
     }
 
     # Don't perform GC correctoion
-    logging::loginfo("Performing GC correction ...")
-    if (!is_null(gc)) {
-      if (is_character(gc)) {
-        gc <- load_bed(gc, region = chrom)
-      } else {
-        chrom0 <- chrom
-        gc <- gc[chrom == chrom0]
-        rm(chrom0)
-      }
-
-      ifs <- .gc_correct(ifs, gc, span = 0.75)
-      rm(gc)
+    if (gc_correct) {
+      logging::loginfo("Performing GC correction ...")
+      ifs <- gc_correct(ifs, span = 0.75)
     }
 
     # Calculate z-scores
     logging::loginfo("Calculating z-scores ...")
-    .calc_ifs_z_score(ifs)
+    calc_ifs_z_score(ifs)
   }
 
 
 #' Calculate z-scores for the IFS
-.calc_ifs_z_score <- function(ifs) {
+calc_ifs_z_score <- function(ifs) {
+  assertthat::are_equal(length(unique(seqnames(ifs))), 1)
+
   mad_factor <- 1.28
-  ifs[, z_score := {
-    score_median <- median(score)
-    score_mad <- mad(score, constant = mad_factor)
-    (score - score_median) / score_mad
-  }, by = chrom]
+
+  score_median <- median(ifs$score)
+  score_mad <- mad(ifs$score, constant = mad_factor)
+  ifs$z_score <- (ifs$score - score_median) / score_mad
+
   ifs
 }
 
 
-#' Perform GC-correction for IFS scores
-#'
-#' @param ifs A `data.table` of original IFS scores.
-#'   in-place.
-#' @param gc A `data.table` of GC contents.
-#' @param span `span` used in LOESS fit.
-#' @return A `data.table` containing GC-corrected IFS scores/
-#' @export
-.gc_correct <- function(ifs, gc, span = 0.75) {
-  chrom <- as.character(unique(ifs$chrom))
-  assertthat::are_equal(length(chrom), 1)
-  assertthat::are_equal(chrom, as.character(unique(gc$chrom)))
+calc_gc <- function(ifs) {
+  gcs <- as.numeric(biovizBase::GCcontent(BSgenome.Hsapiens.UCSC.hg19::Hsapiens, unstrand(frags)))
+  frags$gc <- gcs
+}
 
-  # Implement this using foverlaps
-  ifs[, start := start + 1]
-  gc[, start := start + 1]
-  data.table::setkey(ifs, "chrom", "start", "end")
-  data.table::setkey(gc, "chrom", "start", "end")
-  overlap_idx <-
-    data.table::foverlaps(gc,
-                          ifs,
-                          type = "any",
-                          which = TRUE,
-                          nomatch = NULL)
-  # x: gc, y: 200bp window
-  overlap_idx[, gc := gc[xid]$score]
-  overlap_idx[, gc := mean(gc), by = yid]
 
-  ifs[, start := start - 1]
-  gc[, start := start - 1]
-  data.table::setkey(ifs, "chrom", "start", "end")
-  data.table::setkey(gc, "chrom", "start", "end")
-  ifs <- ifs[overlap_idx$yid, gc := overlap_idx$gc]
+# Perform GC-correction for IFS scores
+#
+# @param ifs A `data.table` of original IFS scores.
+#   in-place.
+# @param gc A `data.table` of GC contents.
+# @param span `span` used in LOESS fit.
+# @return A `data.table` containing GC-corrected IFS scores/
+# @export
+gc_correct <- function(ifs, span = 0.75) {
+  assertthat::are_equal(length(unique(seqnames(ifs))), 1)
+  # chrom <- as.character(unique(ifs$chrom))
+  # assertthat::are_equal(length(chrom), 1)
+  # assertthat::are_equal(chrom, as.character(unique(gc$chrom)))
 
-  data.table::setnames(ifs, "score", "score0")
+  genome <- GenomeInfoDb::genome(ifs) %>% unique()
+  # Only works for hs37-1kg
+  stopifnot(genome == "hs37-1kg")
+  bsgenome <- BSgenome.Hsapiens.1000genomes.hs37d5::hs37d5
+
+  # Dirty hack: need to adjust the seqinfo
+  logging::loginfo("Calculating GC content for each fragment...")
+  seqinfo_hs37_1kg <- seqinfo(ifs)
+
+  levels_hs37_1kg <- seqlevels(ifs)
+  levels_bsgenome <- seqlevels(bsgenome)
+
+  seqinfo(ifs, new2old = match(levels_bsgenome, levels_hs37_1kg)) <- seqinfo(bsgenome)
+  ifs$gc <- biovizBase::GCcontent(bsgenome, ifs) %>% as.numeric()
+  # Restore the seqinfo
+  seqinfo(ifs, new2old = match(levels_hs37_1kg, levels_bsgenome)) <- seqinfo_hs37_1kg
+
+  ifs$score0 <- ifs$score
 
   # Use all points
-  logging::loginfo(str_interp("Training using LOESS mode, total n = ${nrow(ifs)}"))
-  train_data <- ifs[, .(gc, score0)] %>% slice_sample(n = 2e6L)
+  logging::loginfo(str_interp("Training using LOESS mode, total n = ${length(ifs)}"))
+  train_data <- data.table::data.table(gc = ifs$gc, score0 = ifs$score0) %>% slice_sample(n = 2e6L)
   model <-
     loess(
       formula = score0 ~ gc,
       data = train_data,
+      span = span,
       control = loess.control(
         surface = "interpolate",
         statistics = "approximate",
@@ -267,59 +277,85 @@ ifs_score <-
   rm(train_data)
   logging::loginfo("Finished training")
   logging::loginfo("Applying the model for GC correction ...")
-  ifs[, score := score0 - predict(model, newdata = gc) + mean(score0)]
-  # ifs[, score := model$residuals + mean(score0)]
-
-  # train_data <- ifs[score0 > 0][1:20e3L, .(gc, score0)]
-  # model <- loess(formula = score0 ~ gc, data = train_data)
-  # ifs[score0 > 0, score := score0 - predict(model, newdata = gc) + mean(score0)]
-
-  ifs[score < 0, score := 0]
-
+  ifs$score <- ifs$score0 - predict(model, newdata = ifs$gc) + mean(ifs$score0)
+  ifs$score <- ifelse(ifs$score < 0, 0, ifs$score)
 
   # In rare cases, GC-corrected scores can be NA. Don't know why.
   # Here we drop out any of those
-  na_score_idx <- ifs[, is.na(score)]
+  na_score_idx <- is.na(ifs$score)
   if (any(na_score_idx)) {
     logging::logwarn(str_interp("Excluded ${sum(na_score_idx)} records with NA scores"))
     ifs <- ifs[!na_score_idx]
   }
   logging::loginfo("Finished performing GC correction")
+  ifs
 
-  # # Also perform GC-correction for coverage
-  # ifs[score > 0, cov_corrected := cov - lowess(x = gc, y = cov, f = span)$y + mean(cov)]
-  # ifs[is.na(cov_corrected), cov_corrected := 0]
-
-  # ifs[, .(chrom, start, end, score, cov, gc, score0)]
-  ifs[]
-}
-
-
-.exclude_low_mappability <- function(ifs, mappability, mappability_threshold) {
-  chrom <- as.character(unique(ifs$chrom))
-  assertthat::are_equal(length(chrom), 1)
-  assertthat::are_equal(chrom, as.character(unique(mappability$chrom)))
-
-
-  # Implement this using foverlaps
-  ifs[, start := start + 1]
-  mappability[, start := start + 1]
-  data.table::setkey(ifs, "chrom", "start", "end")
-  data.table::setkey(mappability, "chrom", "start", "end")
-  overlap_idx <- data.table::foverlaps(mappability, ifs, type = "any", which = TRUE)
-  # x: mappability, y: 200bp window
-  overlap_idx[, maps := mappability[xid]$score]
-  overlap_idx[, maps := mean(maps), by = yid]
-  # Only keep high-mappability regions
-  overlap_idx <- overlap_idx[maps >= mappability_threshold]
-
-  ifs[, start := start - 1]
-  mappability[, start := start - 1]
-  data.table::setkey(ifs, "chrom", "start", "end")
-  data.table::setkey(mappability, "chrom", "start", "end")
-
-  ifs <- ifs[overlap_idx$yid, mappability := overlap_idx$maps]
-  ifs[mappability >= mappability_threshold]
+  # #
+  # #
+  # # # Implement this using foverlaps
+  # # ifs[, start := start + 1]
+  # # gc[, start := start + 1]
+  # # data.table::setkey(ifs, "chrom", "start", "end")
+  # # data.table::setkey(gc, "chrom", "start", "end")
+  # # overlap_idx <-
+  # #   data.table::foverlaps(gc,
+  # #                         ifs,
+  # #                         type = "any",
+  # #                         which = TRUE,
+  # #                         nomatch = NULL)
+  # # # x: gc, y: 200bp window
+  # # overlap_idx[, gc := gc[xid]$score]
+  # # overlap_idx[, gc := mean(gc), by = yid]
+  # #
+  # # ifs[, start := start - 1]
+  # # gc[, start := start - 1]
+  # # data.table::setkey(ifs, "chrom", "start", "end")
+  # # data.table::setkey(gc, "chrom", "start", "end")
+  # # ifs <- ifs[overlap_idx$yid, gc := overlap_idx$gc]
+  # #
+  # # data.table::setnames(ifs, "score", "score0")
+  #
+  # # Use all points
+  # logging::loginfo(str_interp("Training using LOESS mode, total n = ${nrow(ifs)}"))
+  # train_data <- ifs[, .(gc, score0)] %>% slice_sample(n = 2e6L)
+  # model <-
+  #   loess(
+  #     formula = score0 ~ gc,
+  #     data = train_data,
+  #     control = loess.control(
+  #       surface = "interpolate",
+  #       statistics = "approximate",
+  #       trace.hat = "approximate"
+  #     )
+  #   )
+  # rm(train_data)
+  # logging::loginfo("Finished training")
+  # logging::loginfo("Applying the model for GC correction ...")
+  # ifs[, score := score0 - predict(model, newdata = gc) + mean(score0)]
+  # # ifs[, score := model$residuals + mean(score0)]
+  #
+  # # train_data <- ifs[score0 > 0][1:20e3L, .(gc, score0)]
+  # # model <- loess(formula = score0 ~ gc, data = train_data)
+  # # ifs[score0 > 0, score := score0 - predict(model, newdata = gc) + mean(score0)]
+  #
+  # ifs[score < 0, score := 0]
+  #
+  #
+  # # In rare cases, GC-corrected scores can be NA. Don't know why.
+  # # Here we drop out any of those
+  # na_score_idx <- ifs[, is.na(score)]
+  # if (any(na_score_idx)) {
+  #   logging::logwarn(str_interp("Excluded ${sum(na_score_idx)} records with NA scores"))
+  #   ifs <- ifs[!na_score_idx]
+  # }
+  # logging::loginfo("Finished performing GC correction")
+  #
+  # # # Also perform GC-correction for coverage
+  # # ifs[score > 0, cov_corrected := cov - lowess(x = gc, y = cov, f = span)$y + mean(cov)]
+  # # ifs[is.na(cov_corrected), cov_corrected := 0]
+  #
+  # # ifs[, .(chrom, start, end, score, cov, gc, score0)]
+  # ifs[]
 }
 
 
@@ -330,16 +366,28 @@ ifs_score <-
 #' contains a whole number of `step_size` bins.
 #' @param window_size Width of the sliding window. Must be multiples of `step_size`.
 #' @param step_size Incremental steps of the sliding window.
-#' @param chrom_sizes A chromosome sizes table
-.slide_window <- function(ifs, window_size, step_size, chrom_sizes) {
+slide_window <- function(ifs, window_size, step_size) {
   assertthat::are_equal(window_size %% step_size, 0)
   assertthat::are_equal(length(unique(ifs$chrom)), 1)
 
+  genome <- attr(ifs, "genome")
+  stopifnot(is.character(genome) || length(genome) == 1)
+
+  chrom_sizes <- bedtorch::get_seqinfo(genome)
   chrom_sizes <-
-    data.table::fread(chrom_sizes,
-                      col.names = c("chrom", "size"),
-                      header = FALSE)
-  chrom_sizes[, chrom := factor(chrom)]
+    data.table(
+      chrom = factor(seqnames(chrom_sizes), levels = as.character(seqnames(chrom_sizes))),
+      start = 0L,
+      end = GenomeInfoDb::seqlengths(chrom_sizes)
+    ) %>%
+    bedtorch::as.bedtorch_table(genome = genome)
+  chrom_sizes[, size := end - start]
+
+  # chrom_sizes <-
+  #   data.table::fread(chrom_sizes,
+  #                     col.names = c("chrom", "size"),
+  #                     header = FALSE)
+  # chrom_sizes[, chrom := factor(chrom)]
 
   n <- window_size %/% step_size
 
@@ -378,102 +426,38 @@ ifs_score <-
   ifs[abs(score) < 1e-9, score := 0]
 
   data.table::setkey(ifs, "chrom", "start", "end")
-  ifs
+  ifs <- bedtorch::as.bedtorch_table(ifs, genome = genome)
 }
 
-#' Exclude certain regions from the dataset, using `bedtools`
-#'
-#' @param dt A `data.table` object containing fragment data.
-#' @param region A `data.table` defining excluded regions.
-#' @param check_sort `region` may not be correctly sorted. If `TRUE`, will sort
-#'   `region` by both chromosomes and positions, based on `chrom_sizes`
-#' @param chrom_sizes Path to the chromosome size file.
-#' @return A filtered `data.table` object.
-.exclude_region <-
-  function(dt,
-           region,
-           check_sort = FALSE,
-           chrom_sizes = system.file("extdata", "human_g1k_v37.chrom.sizes", package = "cragr")) {
-    if (nrow(dt) == 0 || is.null(region) || nrow(region) == 0)
-      return(dt)
 
-    region <- region[, .(chrom, start, end)]
-
-    # Implement this using foverlaps
-    dt[, start := start + 1]
-    region[, start := start + 1]
-    data.table::setkey(dt, "chrom", "start", "end")
-    data.table::setkey(region, "chrom", "start", "end")
-    overlap_idx <- data.table::foverlaps(dt, region, type = "any", which = TRUE)
-    # Only those do not overlap
-    overlap_idx <- overlap_idx[, flag := any(!is.na(yid)), by = xid][flag == FALSE, !c("flag")]
-
-    dt[, start := start - 1]
-    region[, start := start - 1]
-    data.table::setkey(dt, "chrom", "start", "end")
-    data.table::setkey(region, "chrom", "start", "end")
-
-    dt[overlap_idx$xid]
-  }
-
-
-
-#' Construct the overall excluded region
-#'
-#' @param chrom A character vector. If not `NULL`, only regions in these
-#'   chromosomes will be considered.
-#' @param blacklist_region Can be a `data.table` object, a list of `data.table`
-#'   object, or a character vector of the data file paths.
-#' @param mappability_region A `data.table` object of mappability scores, or a
-#'   character vector of the mappability score file path.
-#' @param mappability_threshold The mappability score threshold, below which the
-#'   region is considered as low-mappability and excluded from analysis.
-.build_exclude_region <-
+# Construct the overall excluded region
+#
+# @param chrom A character vector. If not `NULL`, only regions in these
+#   chromosomes will be considered.
+# @param blacklist_region Can be a `data.table` object, a list of `data.table`
+#   object, or a character vector of the data file paths.
+# @param mappability_region A `data.table` object of mappability scores, or a
+#   character vector of the mappability score file path.
+# @param mappability_threshold The mappability score threshold, below which the
+#   region is considered as low-mappability and excluded from analysis.
+build_exclude_region <-
   function(chrom = NULL,
            blacklist_region = NULL) {
            # mappability_region = NULL,
            # mappability_threshold = 0.9) {
     # if (is_null(blacklist_region) && is_null(mappability_region)) return(NULL)
-    if (is_null(blacklist_region)) return(NULL)
+    stopifnot(length(chrom) == 1)
+    if (is.null(blacklist_region)) return(NULL)
 
-    if (is_list(blacklist_region)) {
-      blacklist_region %<>% data.table::rbindlist()
+    if (is.list(blacklist_region)) {
+      blacklist_region <- do.call(c, args = blacklist_region)
     } else if (is_character(blacklist_region)) {
-      blacklist_region %<>% map(~ load_bed(., region = chrom)) %>% data.table::rbindlist()
+      blacklist_region %<>%
+        map(~ bedtorch::read_bed(., range = chrom)) %>%
+        do.call(c, args = .)
     }
 
-    # if (is_character(mappability_region)) {
-    #   mappability_region %<>% load_bed(region = chrom)
-    # }
-    # if (!is_null(mappability_region)) {
-    #   mappability_region <-
-    #     mappability_region[score < mappability_threshold]
-    # }
-    #
-    # merged_region <-
-    #   data.table::rbindlist(list(blacklist_region, mappability_region),
-    #                         fill = TRUE)
-    # if (is_null(merged_region) || nrow(merged_region) == 0) return(NULL)
-
-    merged_region <- blacklist_region
-    merged_region <- merged_region[, .(chrom, start, end)]
-    data.table::setkey(merged_region, "chrom", "start", "end")
-
-    chrom_list <- levels(merged_region$chrom)
-    merged_region <- bedr::bedr(
-      method = "merge",
-      input = list(i = merged_region),
-      check.chr = FALSE,
-      check.zero.based = FALSE,
-      check.merge = FALSE,
-      check.valid = FALSE,
-      check.sort = FALSE,
-      verbose = FALSE
-    )
-    data.table::setDT(merged_region)
-    merged_region[, chrom := factor(chrom, levels = chrom_list)]
-    data.table::setkey(merged_region, "chrom", "start", "end")
-    merged_region[]
+    bedtorch::merge_bed(blacklist_region)
   }
 
 
