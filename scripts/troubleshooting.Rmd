@@ -1,12 +1,19 @@
 ---
 title: "R Notebook"
-output: html_notebook
+output:
+  html_document:
+    df_print: paged
 ---
 
 ```{r, setup, include=FALSE}
-knitr::opts_knit$set(root.dir = normalizePath("."))
 knitr::opts_chunk$set(eval = FALSE, cache.comments = FALSE, collapse = TRUE)
 ```
+
+```{r, eval=TRUE}
+library(tidyverse)
+library(here)
+```
+
 
 ```{r}
 # Modify XH's code to output intermediate files. Used for troubleshooting: why my results are different from XH's?
@@ -1071,3 +1078,143 @@ my_ifs[final_region, nomatch = 0][, .(x=pval_local, y=i.pval_local)] %>%
 my_peak <- cragr::call_hotspot(my_ifs)
 overlapped(my_peak, xh_peak)
 ```
+
+## New Implementation
+
+This is an new implementation rely on `GenomicRanges` and other Bioconductor packages, and the performance is much better.
+
+Now I want to compare the result with XH's, as before.
+
+Load XH's data:
+
+```{r, eval=TRUE, cache=TRUE}
+region_chr21 <- data.table::fread(here("sandbox/xh_intermediate/region_batch2_s_res_chr21.txt.gz"), 
+                                  col.names = c("start", "end", "score", "gc", "maps", "pval", "score0"))[
+                                    , `:=`(chrom = factor("21"), start = start - 1L)
+                                  ]
+data.table::setkey(region_chr21, "chrom", "start", "end")
+
+flag_bin <- data.table::fread(here("sandbox/xh_intermediate/flag_batch2_s_res_chr21.txt.gz"))[, {
+  start = as.integer((1:.N - 1)* 20L)
+  end = start + 200L
+  list(chrom = factor("21"), start = start, end = end, flag = V1)
+}]
+data.table::setkey(flag_bin, "chrom", "start", "end")
+region_chr21[, flag := flag_bin$flag]
+region_chr21 <- region_chr21 %>% relocate(chrom, .before = start)
+data.table::setkey(region_chr21, "chrom", "start", "end")
+region_chr21[flag==1]
+```
+
+```{r, eval=TRUE, cache=TRUE}
+final_region <- data.table::fread(here("sandbox/xh_intermediate/final_region_batch2_s_res_chr21.txt.gz"),
+                                  col.names = c("start", "end", "score", "pval", "pval_local", "fdr"))[
+                                    , `:=`(chrom = factor("21"), start = start - 1L)
+                                  ]
+data.table::setkey(final_region, "chrom", "start", "end")
+final_region[]
+```
+
+```{r, eval=TRUE, cache=TRUE}
+xh_peak <- data.table::fread(here("sandbox/xh_intermediate/batch2_s_res_peaks.bed.gz"))
+data.table::setnames(xh_peak, old = colnames(xh_peak)[1:3], new = c("chrom", "start", "end"))
+xh_peak <- xh_peak[chrom == "chr21"]
+xh_peak[, chrom := as.factor("21")]
+data.table::setkey(xh_peak, "chrom", "start", "end")
+
+xh_peak
+```
+
+Calculate IFS scores:
+
+```{r}
+frag <- read_fragments(here("sandbox/xh_intermediate/batch2_res_merged_sort.chr21.bed.gz"), genome = "hs37-1kg")
+ifs <- ifs_score(frag, blacklist_region = here("inst/extdata/wgEncodeDacMapabilityConsensusExcludable.hs37-1kg.bed"), mappability_region = here("sandbox/mappability.hs37-1kg.w200.s20.0_9.bed.gz"))
+ifs <- calc_pois_pval(ifs)
+ifs <- calc_pois_pval_local(ifs, window_size = 200L, step_size = 20L, local_layout = list(`5k` = 5000L, `10k` = 10000L))
+
+start(ifs) <- start(ifs) + 90
+width(ifs) <- 20
+bedtorch::write_bed(ifs, here("sandbox/xh_intermediate/batch2_res_merged_sort.chr21.ifs.v2.bed.gz"), tabix_index = FALSE)
+```
+
+### Scenario 1
+
+My result vs. XH's
+
+```{r}
+my_region <- bedtorch::read_bed(here("sandbox/xh_intermediate/batch2_res_merged_sort.chr21.ifs.v2.bed.gz"), use_gr = FALSE)
+my_region[, `:=`(start = start - 90L)][, end := start + 200L]
+data.table::setkey(my_region, "chrom", "start", "end")
+```
+
+```{r, eval=TRUE, cache=TRUE}
+suppressWarnings(local({
+  df <- my_region[region_chr21[flag == 1]][, .(chrom, start, end, score, i.score, score0, i.score0, pval, i.pval, cov, gc)] %>%
+    as_tibble() %>%
+    filter(score < 60 & i.score < 60) %>% slice_sample(n = 10e3)
+  
+  p1 <-
+    df %>% ggpubr::ggscatter(
+      x = "score",
+      y = "i.score",
+      size = 0.2,
+      alpha = 0.5,
+      color = "steelblue"
+    ) +
+    ggpubr::stat_cor(method = "pearson") +
+    labs(subtitle = "My result vs XH's: GC-corrected scores")
+  
+  p2 <-
+    df %>% ggpubr::ggscatter(
+      x = "score0",
+      y = "i.score0",
+      size = 0.2,
+      alpha = 0.5,
+      color = "steelblue"
+    ) +
+    ggpubr::stat_cor(method = "pearson") +
+    labs(subtitle = "My result vs XH's: original scores")
+  
+  p3 <-
+    df %>% ggpubr::ggscatter(
+      x = "pval",
+      y = "i.pval",
+      size = 0.2,
+      alpha = 0.5,
+      color = "steelblue"
+    ) +
+    ggpubr::stat_cor(method = "pearson") +
+    labs(subtitle = "My result vs XH's: global p-values")
+  
+  cowplot::plot_grid(p1, p2, p3)
+}))
+```
+
+
+```{r}
+ifs[region_chr21[flag==1]][, .(x = score, y = i.score)] %>% 
+  slice_sample(n=10e3L) %>%
+  ggpubr::ggscatter(x = "x", y = "y", size = 0.2, alpha = 0.5, color = "steelblue") +
+  ggpubr::stat_cor(method = "pearson")
+```
+
+```{r}
+ifs[region_chr21[flag==1]][, .(x = score, y = i.score)][, summary(x - y)]
+```
+
+```{r}
+ifs <- cragr::calc_pois_pval(ifs)
+ifs <- cragr::calc_pois_pval_local(ifs, window_size = 200L, step_size = 20L, local_layout = list(`5k`=5e3L, `10k`=10e3L))
+
+ifs[final_region, nomatch = 0][, .(x=pval_local, y=i.pval_local)] %>%
+  slice_sample(n = 10e3L) %>%
+  ggpubr::ggscatter(x = "x", y = "y", size = 0.2, alpha = 0.5, color = "steelblue") +
+  ggpubr::stat_cor(method = "pearson") + scale_x_log10() + scale_y_log10()
+```
+
+```{r}
+my_peak <- cragr::call_hotspot(ifs)
+overlapped(my_peak, xh_peak)
+```
+

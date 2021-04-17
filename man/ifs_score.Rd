@@ -11,7 +11,7 @@ ifs_score(
   step_size = 20L,
   gc_correct = TRUE,
   blacklist_region = NULL,
-  mappability_region = NULL,
+  high_mappability_region = NULL,
   min_mapq = 30L,
   min_fraglen = 50L,
   max_fraglen = 1000L,
@@ -36,7 +36,7 @@ be either a character vector that contains the names of the files defining
 the regions (should be in BED format), a \code{data.table} object, or a list of
 \code{data.table} objects.}
 
-\item{mappability_region}{A \code{data.table} object of mappability scores, or a
+\item{high_mappability_region}{A \code{data.table} object of mappability scores, or a
 character vector of the mappability score file path.}
 
 \item{min_mapq}{Exclude fragments whose \code{MAPQ} scores are smaller than \code{min_mapq}.}

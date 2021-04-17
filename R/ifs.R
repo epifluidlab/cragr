@@ -12,13 +12,18 @@ preprocess_fragment <-
       keepSeqlevels(fragment_data, chrom, pruning.mode = "coarse")
 
     # Apply filters
+    logging::loginfo("Applying MAPQ filter ...")
     if (min_mapq > 0)
       fragment_data <- fragment_data[fragment_data$mapq >= min_mapq]
+    logging::loginfo(str_interp("${length(fragment_data)} fragments have passed filter"))
 
+    logging::loginfo("Applying fragment length filter ...")
     min_fraglen <- min_fraglen %||% 0
     max_fraglen <- max_fraglen %||% Inf
     fragment_data <-
       fragment_data[between(width(fragment_data), min_fraglen, max_fraglen)]
+    logging::loginfo(str_interp("${length(fragment_data)} fragments have passed filter"))
+
 
     if (exclude_soft_clipping &&
         all(c("cigar1", "cigar2") %in% colnames(mcols(fragment_data))))
@@ -52,12 +57,14 @@ preprocess_fragment <-
     start(fragment_data) <- midpoint
     width(fragment_data) <- 1
 
+    logging::loginfo("Applying blacklist region filter ...")
     # Exclude dark regions
     logging::loginfo("Excluding blacklist regions ...")
     if (!is.null(excluded_regions)) {
       fragment_data <-
         fragment_data[-queryHits(findOverlaps(fragment_data, excluded_regions))]
     }
+    logging::loginfo(str_interp("${length(fragment_data)} fragments have passed filter"))
 
     fragment_data
   }
@@ -82,7 +89,6 @@ calculate_raw_ifs <- function(fragment_data, window_size, step_size) {
                        by = window_id][, window_id := NULL]
   ifs %<>%
     bedtorch::as.bedtorch_table(genome = attr(fragment_data, "genome"))
-  rm(fragment_data)
   data.table::setkeyv(ifs, c("chrom", "start", "end"))
 
   # Perform rolling sum over the sliding windows, therefore we have results
@@ -111,7 +117,7 @@ calculate_raw_ifs <- function(fragment_data, window_size, step_size) {
 #'   be either a character vector that contains the names of the files defining
 #'   the regions (should be in BED format), a `data.table` object, or a list of
 #'   `data.table` objects.
-#' @param mappability_region A `data.table` object of mappability scores, or a
+#' @param high_mappability_region A `data.table` object of mappability scores, or a
 #'   character vector of the mappability score file path.
 #' @param mappability_threshold The mappability score threshold, below which the
 #'   region is considered as low-mappability and excluded from analysis.
@@ -130,13 +136,13 @@ ifs_score <-
            step_size = 20L,
            gc_correct = TRUE,
            blacklist_region = NULL,
-           mappability_region = NULL,
+           high_mappability_region = NULL,
            min_mapq = 30L,
            min_fraglen = 50L,
            max_fraglen = 1000L,
            exclude_soft_clipping = FALSE) {
     assertthat::are_equal(window_size %% step_size, 0)
-    assertthat::assert_that(!is.null(mappability_region))
+    assertthat::assert_that(!is.null(high_mappability_region))
 
     if (is.null(chrom)) {
       chrom <- as.character(unique(seqnames(fragment_data)))
@@ -155,7 +161,7 @@ ifs_score <-
             step_size = step_size,
             gc_correct = gc_correct,
             blacklist_region = blacklist_region,
-            mappability_region = mappability_region,
+            high_mappability_region = high_mappability_region,
             min_mapq = min_mapq,
             min_fraglen = min_fraglen,
             max_fraglen = max_fraglen,
@@ -177,29 +183,38 @@ ifs_score <-
         blacklist_region = blacklist_region
       )
 
+    log_mem("Done preprocessing fragment")
+
     ifs <- calculate_raw_ifs(fragment_data, window_size = window_size, step_size = step_size)
     ifs <- bedtorch::as.GenomicRanges(ifs)
 
+    log_mem("Done calculating raw IFS")
+
     # Exclude low-mappability regions
     logging::loginfo("Excluding low mappability regions ...")
-    if (!is_null(mappability_region)) {
-      if (is.character(mappability_region)) {
-        mappability_region <- bedtorch::read_bed(mappability_region, range = chrom)
+    if (!is_null(high_mappability_region)) {
+      if (is.character(high_mappability_region)) {
+        high_mappability_region <- bedtorch::read_bed(high_mappability_region, range = chrom)
       } else {
-        mappability_region <-
-          keepSeqlevels(mappability_region, chrom, pruning.mode = "coarse")
+        high_mappability_region <-
+          keepSeqlevels(high_mappability_region, chrom, pruning.mode = "coarse")
       }
+      log_mem("Done loading high mappability regions")
 
-      # Intervals in ifs and mappability_region should be exactly matched (200bp window)
-      ifs <- ifs[queryHits(findOverlaps(ifs, mappability_region, type = "equal"))]
-      rm(mappability_region)
+      # Intervals in ifs and high_mappability_region should be exactly matched (200bp window)
+      ifs <- ifs[queryHits(findOverlaps(ifs, high_mappability_region, type = "equal"))]
+      rm(high_mappability_region)
     }
+
+    log_mem("Done mappability filtering")
 
     # Don't perform GC correctoion
     if (gc_correct) {
       logging::loginfo("Performing GC correction ...")
       ifs <- gc_correct(ifs, span = 0.75)
     }
+
+    log_mem("Done GC correction")
 
     # Calculate z-scores
     logging::loginfo("Calculating z-scores ...")
@@ -275,7 +290,10 @@ gc_correct <- function(ifs, span = 0.75) {
       )
     )
   rm(train_data)
+
   logging::loginfo("Finished training")
+  log_mem("Done GC training")
+
   logging::loginfo("Applying the model for GC correction ...")
   ifs$score <- ifs$score0 - predict(model, newdata = ifs$gc) + mean(ifs$score0)
   ifs$score <- ifelse(ifs$score < 0, 0, ifs$score)
@@ -436,16 +454,9 @@ slide_window <- function(ifs, window_size, step_size) {
 #   chromosomes will be considered.
 # @param blacklist_region Can be a `data.table` object, a list of `data.table`
 #   object, or a character vector of the data file paths.
-# @param mappability_region A `data.table` object of mappability scores, or a
-#   character vector of the mappability score file path.
-# @param mappability_threshold The mappability score threshold, below which the
-#   region is considered as low-mappability and excluded from analysis.
 build_exclude_region <-
   function(chrom = NULL,
            blacklist_region = NULL) {
-           # mappability_region = NULL,
-           # mappability_threshold = 0.9) {
-    # if (is_null(blacklist_region) && is_null(mappability_region)) return(NULL)
     stopifnot(length(chrom) == 1)
     if (is.null(blacklist_region)) return(NULL)
 
@@ -453,7 +464,14 @@ build_exclude_region <-
       blacklist_region <- do.call(c, args = blacklist_region)
     } else if (is_character(blacklist_region)) {
       blacklist_region %<>%
-        map(~ bedtorch::read_bed(., range = chrom)) %>%
+        map(function(region) {
+          if (file.exists(region))
+            bedtorch::read_bed(region, range = chrom)
+          else if (region == "encode.blacklist.hs37-1kg")
+            bedtorch::read_bed(system.file("extdata", "wgEncodeDacMapabilityConsensusExcludable.hs37-1kg.bed", package = "cragr"))
+          else
+            stop(paste0("Invalid region: ", region))
+        }) %>%
         do.call(c, args = .)
     }
 
@@ -561,36 +579,46 @@ pcpois <- .build_pcpois()
 #'   on continuous Poisson model.
 #' @export
 calc_pois_pval <- function(ifs, cpois = FALSE, threshold = 1e-5) {
+  # browser()
   # Standard Poisson model
-  ifs[, pval := ppois(score, lambda = mean(score)), by = chrom]
+  grl <- GenomicRanges::split(ifs, seqnames(ifs))
+  log_mem("Done spliting IFS data frame")
+  grl %>%
+    lapply(function(gr) {
+      gr$pval <- ppois(gr$score, lambda = mean(gr$score))
+      gr$pval_adjust <- p.adjust(gr$pval, method = "BH")
+      gr
+    }) %>%
+    GenomicRanges::GRangesList() %>% unlist()
 
-  # # Alternatively, use MAD-outlier detection
-  # ifs[, pval := {
-  #   score_median <- median_score
-  #   mad <- median(abs(score - score_median))
-  #   score_filtered <- score %>% discard(function(x) abs(x - score_median) > 3 * mad)
-  #   lambda <- mean(score_filtered)
-  #   ppois(score, lambda = lambda)
-  # }]
-
-  # Only those pval <= threshld are used in p-value adjustment
-  ifs[, pval_adjust := {
-    # v <- ifelse(pval > threshold, 1, pval)
-    p.adjust(pval, method = "BH")
-  },
-  by = chrom]
-
-  if (cpois) {
-    ifs[, pval_cpois := pcpois(score, lambda = mean(score)), by = chrom]
-
-    # Only those pval <= threshld are used in p-value adjustment
-    ifs[, pval_cpois_adjust := {
-      # v <- ifelse(pval_cpois > threshold, 1, pval_cpois)
-      p.adjust(pval, method = "BH")
-    },
-    by = chrom]
-  }
-  ifs
+#
+#   # # Alternatively, use MAD-outlier detection
+#   # ifs[, pval := {
+#   #   score_median <- median_score
+#   #   mad <- median(abs(score - score_median))
+#   #   score_filtered <- score %>% discard(function(x) abs(x - score_median) > 3 * mad)
+#   #   lambda <- mean(score_filtered)
+#   #   ppois(score, lambda = lambda)
+#   # }]
+#
+#   # Only those pval <= threshld are used in p-value adjustment
+#   ifs[, pval_adjust := {
+#     # v <- ifelse(pval > threshold, 1, pval)
+#     p.adjust(pval, method = "BH")
+#   },
+#   by = chrom]
+#
+#   if (cpois) {
+#     ifs[, pval_cpois := pcpois(score, lambda = mean(score)), by = chrom]
+#
+#     # Only those pval <= threshld are used in p-value adjustment
+#     ifs[, pval_cpois_adjust := {
+#       # v <- ifelse(pval_cpois > threshold, 1, pval_cpois)
+#       p.adjust(pval, method = "BH")
+#     },
+#     by = chrom]
+#   }
+#   ifs
 }
 
 
@@ -602,12 +630,16 @@ calc_pois_pval_local <- function(ifs, window_size, step_size, local_layout, cpoi
   assertthat::are_equal(window_size %% step_size, 0)
   assertthat::assert_that(all(unlist(local_layout) %% step_size == 0))
 
+  # Use data.table for the calculation
+  seqinfo_original <- seqinfo(ifs)
+  ifs <- bedtorch::as.bedtorch_table(ifs)
   # Construct a continuous IFS score track, with filled 0s.
   scaffold <-
     ifs[, .(start = seq(min(start), max(start), by = step_size)), by = chrom][, end := start + window_size]
   data.table::setkey(scaffold, "chrom", "start", "end")
   ifs_expanded <- ifs[scaffold]
   rm(scaffold)
+  log_mem("Done expanding IFS data frame")
 
   # for (local_suffix in names(local_layout)) {
   #   local_width <- local_layout[[local_suffix]]
@@ -622,29 +654,29 @@ calc_pois_pval_local <- function(ifs, window_size, step_size, local_layout, cpoi
           results <- local_layout %>% map(function(local_width) {
             # local_width: may be 5000L or 10000L
             # Local means over the 5k/10k region
-            outer_sum <- rollsum(
+            outer_sum <- bedtorch::rollsum(
               score,
               k = local_width %/% step_size,
               na_pad = TRUE,
               align = "center",
-              na_rm = TRUE
+              na.rm = TRUE
             )
-            inner_sum <- rollsum(
+            inner_sum <- bedtorch::rollsum(
               score,
               k = window_size %/% step_size * 2,
               na_pad = TRUE,
               align = "center",
-              na_rm = TRUE
+              na.rm = TRUE
             )
 
             # How many valid 200-bp windows in the 5k/10 rolling region?
-            outer_count <- rollsum(
+            outer_count <- bedtorch::rollsum(
               as.integer(!is.na(score)),
               k = local_width %/% step_size,
               na_pad = TRUE,
               align = "center"
             )
-            inner_count <- rollsum(
+            inner_count <- bedtorch::rollsum(
               as.integer(!is.na(score)),
               k = window_size %/% step_size * 2,
               na_pad = TRUE,
@@ -652,6 +684,7 @@ calc_pois_pval_local <- function(ifs, window_size, step_size, local_layout, cpoi
             )
             valid_count <- outer_count - inner_count
             score_rollmean <- ifelse(!is.na(valid_count) & valid_count > 0, (outer_sum - inner_sum) / valid_count, NA)
+            score_rollmean[score_rollmean < 0] <- 0
 
 
             # After calculating rollmean and valid_count, we can safely remove
@@ -719,6 +752,12 @@ calc_pois_pval_local <- function(ifs, window_size, step_size, local_layout, cpoi
   data.table::setkey(local_peaks, "chrom", "start", "end")
 
   ifs <- ifs[local_peaks]
+  ifs <- bedtorch::as.GenomicRanges(ifs)
+
+  levels_original <- seqlevels(seqinfo_original)
+  levels_now <- seqlevels(ifs)
+  seqinfo(ifs, new2old = match(levels_original, levels_now)) <- seqinfo_original
+
   ifs
 }
 
@@ -726,48 +765,75 @@ calc_pois_pval_local <- function(ifs, window_size, step_size, local_layout, cpoi
 #' Call hotspots based on pvalues (and merge)
 #' @export
 call_hotspot <- function(ifs, use_cpois = FALSE, fdr_cutoff = 0.01, pval_cutoff = 1e-5, local_pval_cutoff = 1e-5, merge_distance = 200) {
-  check_binaries("bedtools", stop_on_fail = TRUE)
-  ifs <- ifs[, .(chrom, start, end, z_score, score, pval, pval_adjust, pval_local, cov, score0)]
+  ifs <- bedtorch::as.bedtorch_table(ifs)
+  ifs <-
+    ifs[, .(chrom,
+            start,
+            end,
+            z_score,
+            score,
+            pval,
+            pval_adjust,
+            pval_local,
+            cov,
+            score0)]
   fields <- colnames(ifs)
 
   if (use_cpois) {
-    hotspot <- ifs[pval <= pval_cutoff & pval_cpois_adjust <= fdr_cutoff & pval_cpois_local <= local_pval_cutoff]
+    hotspot <-
+      ifs[pval <= pval_cutoff &
+            pval_cpois_adjust <= fdr_cutoff &
+            pval_cpois_local <= local_pval_cutoff]
   } else {
-    hotspot <- ifs[pval <= pval_cutoff & pval_adjust <= fdr_cutoff & pval_local <= local_pval_cutoff]
+    hotspot <-
+      ifs[pval <= pval_cutoff &
+            pval_adjust <= fdr_cutoff & pval_local <= local_pval_cutoff]
   }
   if (nrow(hotspot) == 0) {
     # hotspot is empty
     return(NULL)
   }
 
-  merge_cols <- c("z_score", "score", "pval", "pval_adjust", "pval_local", "cov", "score0")
-  merge_stat <- c("mean", "mean", rep("max", 3), "mean", "mean")
-
-  if ("pval_cpois" %in% colnames(ifs)) {
-    merge_cols <- c(merge_cols, "pval_cpois", "pval_cpois_adjust", "pval_cpois_local")
-    merge_stat <- c(merge_stat, rep("max", 3))
-  }
-  merge_cols <- merge_cols %>% map_int(function(v) which(fields == v))
-  merge_param <- paste0("-c ", paste(merge_cols, collapse = ","), " -o ", paste(merge_stat, collapse = ","))
-
-  hotspot <-
-    bedr::bedr(
-      method = "merge",
-      capture.output = "disk",
-      input = list(i = hotspot),
-      param = str_interp("-d ${merge_distance} ${merge_param}"),
-      check.chr = FALSE,
-      check.zero.based = FALSE,
-      check.valid = FALSE,
-      check.sort = FALSE,
-      check.merge = FALSE,
-      verbose = FALSE
-    ) %>% data.table::as.data.table()
-  data.table::setnames(hotspot, new = fields)
-  data.table::setkey(hotspot, "chrom", "start", "end")
-  hotspot[, {
-    c(.SD[, 1:3], list(name = "."), .SD[,-1:-3])
-  }]
+  bedtorch::merge_bed(
+    bedtorch::as.GenomicRanges(hotspot),
+    operation = list(
+      z_score = list(
+        on = "z_score",
+        func = function(x)
+          mean(x, na.rm = TRUE)
+      ),
+      score = list(
+        on = "score",
+        func = function(x)
+          mean(x, na.rm = TRUE)
+      ),
+      pval = list(
+        on = "pval",
+        func = function(x)
+          max(x, na.rm = TRUE)
+      ),
+      pval_adjust = list(
+        on = "pval_adjust",
+        func = function(x)
+          max(x, na.rm = TRUE)
+      ),
+      pval_local = list(
+        on = "pval_local",
+        func = function(x)
+          max(x, na.rm = TRUE)
+      ),
+      cov = list(
+        on = "cov",
+        func = function(x)
+          mean(x, na.rm = TRUE)
+      ),
+      score0 = list(
+        on = "score0",
+        func = function(x)
+          mean(x, na.rm = TRUE)
+      )
+    )
+  )
 }
 
 

@@ -91,3 +91,12 @@ build_high_mappability_regions <- function(maps_file, chrom, genome, window_size
 #   build_high_mappability_regions("wgEncodeDukeMapabilityUniqueness35bp.hs37-1kg.20bp.bedGraph.gz",
 #                                  chrom, "hs37-1kg", 200, 20, 0.9)
 # })
+
+
+
+log_mem <- function(label = "Unknown") {
+  if (requireNamespace("lobstr")) {
+    mem <- as.numeric(lobstr::mem_used()) / 1024**2
+    logging::logdebug(str_interp("[${label}] Memory used: ${mem} MB"))
+  }
+}
