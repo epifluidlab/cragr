@@ -43,7 +43,6 @@ build_high_mappability_regions <- function(maps_file, chrom, genome, window_size
   assertthat::are_equal(window_size %% step_size, 0)
   chrom0 <- chrom
 
-  browser()
   chrom_sizes <- bedtorch::get_seqinfo(genome)
   chrom_sizes <-
     data.table(

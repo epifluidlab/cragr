@@ -765,6 +765,7 @@ calc_pois_pval_local <- function(ifs, window_size, step_size, local_layout, cpoi
 #' Call hotspots based on pvalues (and merge)
 #' @export
 call_hotspot <- function(ifs, use_cpois = FALSE, fdr_cutoff = 0.01, pval_cutoff = 1e-5, local_pval_cutoff = 1e-5, merge_distance = 200) {
+  browser()
   ifs <- bedtorch::as.bedtorch_table(ifs)
   ifs <-
     ifs[, .(chrom,

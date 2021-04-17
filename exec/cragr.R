@@ -37,17 +37,25 @@ write_ifs_as_bedgraph <- function(ifs, script_args, comments) {
 
   bedtorch::write_bed(
     ifs,
-    file_path = file.path(script_args$output_dir, paste0(script_args$sample_id, ".ifs.bedGraph.gz")),
+    file_path = script_args$output_ifs,
     comments = comments
   )
+}
+
+
+log_mem <- function(label = "Unknown") {
+  if (requireNamespace("lobstr")) {
+    mem <- as.numeric(lobstr::mem_used()) / 1024**2
+    logging::logdebug(str_interp("[${label}] Memory used: ${mem} MB"))
+  }
 }
 
 
 # example
 # script_args <- list(
 #   input = "sandbox/xh_intermediate/batch2_res_merged_sort.chr21.bed.gz",
-#   output_dir = "sandbox",
-#   sample_id = "T1",
+#   input_ifs = "sandbox/xh_intermediate/batch2_res_merged_sort.chr21.ifs.bed.gz",
+#   input_hotspot = "sandbox/xh_intermediate/batch2_res_merged_sort.chr21.hotspot.bed.gz",
 #   genome = "hs37-1kg",
 #   gc_correct = TRUE,
 #   high_mappability = "sandbox/mappability.hs37-1kg.w200.s20.0_9.bed.gz",
@@ -86,8 +94,8 @@ if (interactive()) {
   parser <- optparse::OptionParser(
     option_list = list(
       optparse::make_option(c("-i", "--input"), help = "Path to the inpuut file. If there are multiple input files, they should be separated by colons"),
-      optparse::make_option(c("-o", "--output-dir"), type = "character", help = "Directory for output files"),
-      optparse::make_option(c("--sample-id"), type = "character"),
+      optparse::make_option(c("--output-ifs"), type = "character", help = "Directory for IFS output"),
+      optparse::make_option(c("--output-hotspot"), type = "character", help = "Directory for hotspot output"),
       optparse::make_option(c("--genome"), default = "hs37-1kg", help = "Genome of the input"),
       optparse::make_option(
         c("-g", "--gc-correct"),
@@ -149,7 +157,7 @@ if (interactive()) {
         default = NULL,
         help = "During hotspot calling, two hotspots with distance smaller than this will be merged together. If not specified, the sliding window size will by used, i.e. 200bp by default"
       ),
-      optparse::make_option(c("--verbose"), default = FALSE)
+      optparse::make_option(c("--verbose"), default = FALSE, action = "store_true")
     )
   )
 
@@ -192,6 +200,11 @@ if (interactive()) {
 
   if (script_args$window_size %% script_args$step_size != 0)
     stop("window_size must be multiples of step_size")
+
+  # genome must be hs37-1kg
+  if (script_args$genome != "hs37-1kg") {
+    stop("Currently, only genome hs37-1kg is supported")
+  }
 }
 
 # Build comment lines
@@ -218,7 +231,7 @@ library(here)
 logging::loginfo(str_interp("Argument summary:"))
 comments %>% purrr::walk(function(v) logging::loginfo(v))
 
-if (subcommand %in% c("ifs", "main")) {
+if (subcommand == "ifs") {
   logging::loginfo("Input: fragment data")
 
   frag <- script_args$input %>% map(function(input_file) {
@@ -257,29 +270,11 @@ if (subcommand %in% c("ifs", "main")) {
     exclude_soft_clipping = script_args$exclude_soft_clipping
   )
 
-  bedtorch::write_bed(
-    ifs,
-    file_path = file.path(script_args$output_dir, paste0(script_args$sample_id, ".ifs.raw.bedGraph.gz")),
-    comments = comments
-  )
-
   rm(frag)
-}
-
-
-if (subcommand == "hotspot") {
-  logging::loginfo("Loading IFS scores ...")
-  # Load IFS score from input file
-
-  logging::loginfo(str_interp("Loading raw IFS scores: ${script_args$input} ..."))
-  ifs <- bedtorch::read_bed(script_args$input)
 
   logging::loginfo("Raw IFS summary:")
   print(ifs)
-}
 
-
-if (subcommand %in% c("hotspot", "main")) {
   logging::loginfo("Calculating global p-values ...")
   ifs <- calc_pois_pval(ifs, cpois = script_args$cpois)
   log_mem("Done calculating global p-values")
@@ -295,7 +290,19 @@ if (subcommand %in% c("hotspot", "main")) {
     )
   log_mem("Done calculating local p-values")
 
+  logging::loginfo("IFS summary:")
+  print(ifs)
+
   write_ifs_as_bedgraph(ifs, script_args, comments)
+} else if (subcommand == "hotspot") {
+  logging::loginfo("Loading IFS scores ...")
+  # Load IFS score from input file
+
+  logging::loginfo(str_interp("Loading IFS scores: ${script_args$input} ..."))
+  ifs <- bedtorch::read_bed(script_args$input)
+
+  logging::loginfo("Raw IFS summary:")
+  print(ifs)
 
   logging::loginfo("Calling hotspots ...")
 
@@ -333,33 +340,33 @@ if (subcommand %in% c("hotspot", "main")) {
 
   if (is.null(hotspot_standard)) {
     logging::loginfo("Called 0 hotspots")
-    q(save = "no")
-    # # When no hotspots have been called
+    # When no hotspots have been called
     # local({
     #   fields <- c("chrom","start","end","name","z_score","score","pval","pval_adjust","pval_local","cov","score0")
     #   fields %>% as.list() %>% data.table::as.data.table() %>% magrittr::set_colnames(fields) %>% filter(chrom != chrom)
-    # }) -> hotspot_standard
-  }
+    # }) %>% bedtorch::write_bed(file_path = script_args$output_hotspot, comments = comments)
+    system(str_interp("touch ${script_args$output_hotspot}"))
+  } else {
+    n_hotspot <- length(hotspot_standard)
+    logging::loginfo(str_interp("Called ${n_hotspot} hotspots"))
 
-  n_hotspot <- length(hotspot_standard)
-  logging::loginfo(str_interp("Called ${n_hotspot} hotspots"))
+    logging::loginfo("Writing results to disk ...")
 
-  logging::loginfo("Writing results to disk ...")
-
-  bedtorch::write_bed(
-    hotspot_standard,
-    file_path = file.path(script_args$output_dir, paste0(script_args$sample_id, ".hotspot.bed.gz")),
-    comments = comments
-  )
-
-  if (script_args$cpois) {
-    stop()
-    write_bed(
-      hotspot_cpois,
-      file_path = str_interp("${script_args$prefix}.hotspot.cpois.bed.gz"),
-      create_index = TRUE
+    bedtorch::write_bed(
+      hotspot_standard,
+      file_path = script_args$output_hotspot,
+      comments = comments
     )
+
+    if (script_args$cpois) {
+      stop()
+      write_bed(
+        hotspot_cpois,
+        file_path = str_interp("${script_args$prefix}.hotspot.cpois.bed.gz"),
+        create_index = TRUE
+      )
+    }
   }
+} else {
+  stop(paste0("Invalid subcommand: ", subcommand))
 }
-
-
