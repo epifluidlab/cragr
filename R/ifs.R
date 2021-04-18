@@ -274,7 +274,9 @@ calc_gc <- function(ifs) {
   levels_bsgenome <- seqlevels(bsgenome)
 
   seqinfo(ifs, new2old = match(levels_bsgenome, levels_hs37_1kg)) <- seqinfo(bsgenome)
-  ifs$gc <- biovizBase::GCcontent(bsgenome, ifs) %>% as.numeric()
+  seqs <- BSgenome::getSeq(bsgenome, ifs)
+  ifs$gc <- (Biostrings::letterFrequency(seqs, letters = "CG", as.prob = TRUE))[, 1]
+
   # Restore the seqinfo
   seqinfo(ifs, new2old = match(levels_hs37_1kg, levels_bsgenome)) <- seqinfo_hs37_1kg
 
