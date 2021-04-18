@@ -1,3 +1,7 @@
+# Prepross fragment data
+# 1. MAPQ filter
+# 2. Fragment length filter
+# 3. Blacklist region filter
 preprocess_fragment <-
   function(fragment_data,
            chrom,
@@ -70,6 +74,7 @@ preprocess_fragment <-
   }
 
 
+# Calculate raw IFS scores, i.e. the ones before GC-correction
 calculate_raw_ifs <- function(fragment_data, window_size, step_size) {
   # Get coverage and calcuate IFS score for each 20bp (step-size) window
   logging::loginfo("Calculating raw IFS scores ...")
@@ -104,14 +109,14 @@ calculate_raw_ifs <- function(fragment_data, window_size, step_size) {
 
 #' Calculate IFS scores
 #'
-#' @param fragment_data A `data.table` containing cfDNA fragment data.
+#' @param fragment_data A `GRanges` data frame containing cfDNA fragment data.
 #' @param chrom Calculate IFS scores for certain chromosomes. If `NULL`, all
 #'   chromosomes in `fragment_data` will be used.
 #' @param window_size Width of the sliding window. Must be multiples of `step_size`.
 #' @param step_size Incremental steps of the sliding window.
-#' @param gc A `data.table` or character vector indicating the G+C% track. If
-#'   `NULL`, do not perform GC-correction.
-#' @param gc_correct Logical value. Whether to perform GC correction.
+#' @param gc_correct Logical value. Whether to perform GC correction. If `TRUE`,
+#'   the corresponding `BSgenome` should be present. Currently, only support
+#'   `BSgenome.Hsapiens.1000genomes.hs37d5`.
 #' @param blacklist_region Those fragments whose midpoint fall within any of the
 #'   excluded regions will not be used in the analysis. `blacklist_region` can
 #'   be either a character vector that contains the names of the files defining
@@ -141,6 +146,7 @@ ifs_score <-
            min_fraglen = 50L,
            max_fraglen = 1000L,
            exclude_soft_clipping = FALSE) {
+    stopifnot(is(fragment_data, "GRanges"))
     assertthat::are_equal(window_size %% step_size, 0)
     assertthat::assert_that(!is.null(high_mappability_region))
 
@@ -190,36 +196,50 @@ ifs_score <-
 
     log_mem("Done calculating raw IFS")
 
-    # Exclude low-mappability regions
-    logging::loginfo("Excluding low mappability regions ...")
-    if (!is_null(high_mappability_region)) {
-      if (is.character(high_mappability_region)) {
-        high_mappability_region <- bedtorch::read_bed(high_mappability_region, range = chrom)
-      } else {
-        high_mappability_region <-
-          keepSeqlevels(high_mappability_region, chrom, pruning.mode = "coarse")
-      }
-      log_mem("Done loading high mappability regions")
-
-      # Intervals in ifs and high_mappability_region should be exactly matched (200bp window)
-      ifs <- ifs[queryHits(findOverlaps(ifs, high_mappability_region, type = "equal"))]
-      rm(high_mappability_region)
-    }
-
-    log_mem("Done mappability filtering")
-
-    # Don't perform GC correctoion
-    if (gc_correct) {
-      logging::loginfo("Performing GC correction ...")
-      ifs <- gc_correct(ifs, span = 0.75)
-    }
-
-    log_mem("Done GC correction")
-
-    # Calculate z-scores
-    logging::loginfo("Calculating z-scores ...")
-    calc_ifs_z_score(ifs)
+    ifs
   }
+
+
+#' Postprocess raw IFS scores
+#'
+#' 1. Mappability filter
+#' 2. GC-correction
+#' 3. Calculate z-scores
+#'
+#' This is counter-intuitive, but use much less memory and SU
+#' @export
+postprocess_ifs <- function(ifs, chrom, high_mappability_region, gc_correct) {
+  # Exclude low-mappability regions
+  logging::loginfo("Excluding low mappability regions ...")
+  if (!is_null(high_mappability_region)) {
+    if (is.character(high_mappability_region)) {
+      high_mappability_region <- bedtorch::read_bed(high_mappability_region, range = chrom)
+    } else {
+      high_mappability_region <-
+        keepSeqlevels(high_mappability_region, chrom, pruning.mode = "coarse")
+    }
+    log_mem("Done loading high mappability regions")
+
+    # Intervals in ifs and high_mappability_region should be exactly matched (200bp window)
+    ifs <- ifs[queryHits(findOverlaps(ifs, high_mappability_region, type = "equal"))]
+    rm(high_mappability_region)
+  }
+
+  log_mem("Done mappability filtering")
+
+  # Don't perform GC correctoion
+  if (gc_correct) {
+    logging::loginfo("Performing GC correction ...")
+    ifs <- gc_correct(ifs, span = 0.75)
+  }
+
+  log_mem("Done GC correction")
+
+  # Calculate z-scores
+  logging::loginfo("Calculating z-scores ...")
+  ifs <- calc_ifs_z_score(ifs)
+  ifs
+}
 
 
 #' Calculate z-scores for the IFS

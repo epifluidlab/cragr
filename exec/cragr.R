@@ -87,8 +87,8 @@ if (interactive()) {
   subcommand <- args[1]
   args <- args[-1]
 
-  if (!subcommand %in% c("main", "ifs", "hotspot"))
-    stop("Subcommand should be one of the following: main, ifs, and hotspot")
+  if (!subcommand %in% c("stage1", "stage2"))
+    stop("Subcommand should be one of the following: stage1, stage2")
 
   # Run in CLI script mode
   parser <- optparse::OptionParser(
@@ -231,7 +231,7 @@ library(here)
 logging::loginfo(str_interp("Argument summary:"))
 comments %>% purrr::walk(function(v) logging::loginfo(v))
 
-if (subcommand == "ifs") {
+if (subcommand == "stage1") {
   logging::loginfo("Input: fragment data")
 
   frag <- script_args$input %>% map(function(input_file) {
@@ -275,6 +275,20 @@ if (subcommand == "ifs") {
   logging::loginfo("Raw IFS summary:")
   print(ifs)
 
+  bedtorch::write_bed(ifs, file_path = script_args$output_ifs)
+} else if (subcommand == "stage2") {
+  logging::loginfo("Loading IFS scores ...")
+  # Load IFS score from input file
+
+  logging::loginfo(str_interp("Loading IFS scores: ${script_args$input} ..."))
+  ifs <- bedtorch::read_bed(script_args$input, genome = script_args$genome)
+
+  logging::loginfo("Raw IFS summary:")
+  print(ifs)
+
+  logging::loginfo("Post-processing raw IFS scores")
+  ifs <- postprocess_ifs(ifs, script_args$chrom, script_args$high_mappability, script_args$gc_correct)
+
   logging::loginfo("Calculating global p-values ...")
   ifs <- calc_pois_pval(ifs, cpois = script_args$cpois)
   log_mem("Done calculating global p-values")
@@ -294,15 +308,6 @@ if (subcommand == "ifs") {
   print(ifs)
 
   write_ifs_as_bedgraph(ifs, script_args, comments)
-} else if (subcommand == "hotspot") {
-  logging::loginfo("Loading IFS scores ...")
-  # Load IFS score from input file
-
-  logging::loginfo(str_interp("Loading IFS scores: ${script_args$input} ..."))
-  ifs <- bedtorch::read_bed(script_args$input)
-
-  logging::loginfo("Raw IFS summary:")
-  print(ifs)
 
   logging::loginfo("Calling hotspots ...")
 

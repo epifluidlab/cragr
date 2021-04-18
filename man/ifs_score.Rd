@@ -19,7 +19,7 @@ ifs_score(
 )
 }
 \arguments{
-\item{fragment_data}{A \code{data.table} containing cfDNA fragment data.}
+\item{fragment_data}{A \code{GRanges} data frame containing cfDNA fragment data.}
 
 \item{chrom}{Calculate IFS scores for certain chromosomes. If \code{NULL}, all
 chromosomes in \code{fragment_data} will be used.}
@@ -28,7 +28,9 @@ chromosomes in \code{fragment_data} will be used.}
 
 \item{step_size}{Incremental steps of the sliding window.}
 
-\item{gc_correct}{Logical value. Whether to perform GC correction.}
+\item{gc_correct}{Logical value. Whether to perform GC correction. If \code{TRUE},
+the corresponding \code{BSgenome} should be present. Currently, only support
+\code{BSgenome.Hsapiens.1000genomes.hs37d5}.}
 
 \item{blacklist_region}{Those fragments whose midpoint fall within any of the
 excluded regions will not be used in the analysis. \code{blacklist_region} can
@@ -49,9 +51,6 @@ character vector of the mappability score file path.}
 inferred lengths are less reliable. If \code{TRUE}, such fragments will be
 excluded from the analysis. \code{cigar1} and \code{cigar2} should be present in the
 dataset.}
-
-\item{gc}{A \code{data.table} or character vector indicating the G+C\% track. If
-\code{NULL}, do not perform GC-correction.}
 
 \item{mappability_threshold}{The mappability score threshold, below which the
 region is considered as low-mappability and excluded from analysis.}
