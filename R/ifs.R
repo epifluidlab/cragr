@@ -65,8 +65,10 @@ preprocess_fragment <-
     # Exclude dark regions
     logging::loginfo("Excluding blacklist regions ...")
     if (!is.null(excluded_regions)) {
-      fragment_data <-
-        fragment_data[-queryHits(findOverlaps(fragment_data, excluded_regions))]
+      hits <- queryHits(findOverlaps(fragment_data, excluded_regions))
+      # Caution: hits may be empty!
+      if (length(hits) > 0)
+        fragment_data <- fragment_data[-hits]
     }
     logging::loginfo(str_interp("${length(fragment_data)} fragments have passed filter"))
 
