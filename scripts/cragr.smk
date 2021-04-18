@@ -35,7 +35,7 @@ def ifs_raw_cores(chrom, file_path):
     return int(max([math.ceil(chrom_factor * size_factor), 2]))
 
 
-rule raw_ifs:
+rule stage1:
     input:
         frag="frag/{sid}.frag.bed.gz",
         frag_idx="frag/{sid}.frag.bed.gz.tbi",
@@ -45,7 +45,7 @@ rule raw_ifs:
         ifs=temp("temp/{sid}.ifs.raw.chr{chrom}.bed.gz")
     log: "temp/{sid}.ifs.raw.chr{chrom}.log"
     params:
-        label=lambda wildcards: f"ifs.raw.{wildcards.sid}.chr{wildcards.chrom}",
+        label=lambda wildcards: f"cragr.stage1.{wildcards.sid}.chr{wildcards.chrom}",
         script_home=lambda wildcards: SCRIPT_HOME
     threads: lambda wildcards, input, attempt: int(ifs_raw_cores(wildcards.chrom, input.frag) * (0.5 + 0.5 * attempt))
     resources:
@@ -57,7 +57,7 @@ rule raw_ifs:
         """
         tmpdir=$(mktemp -d)
 
-        Rscript {params.script_home}/cragr.R ifs \
+        Rscript {params.script_home}/cragr.R stage1 \
         -i {input.frag} \
         --output-ifs "$tmpdir"/output.bed.gz \
         -m {input.mappability} \
@@ -69,16 +69,16 @@ rule raw_ifs:
         """
 
 
-rule hotspot:
+rule stage2:
     input: 
         ifs=temp("temp/{sid}.ifs.raw.chr{chrom}.bed.gz"),
         mappability="data/mappability.hs37-1kg.w200.s20.0_9.bed.gz",
     output: 
-        ifs="result/{sid}.ifs.chr{chrom}.bedGraph.gz",
-        hotspot="result/{sid}.hotspot.chr{chrom}.bed.gz",
+        ifs=temp("temp/{sid}.ifs.chr{chrom}.bedGraph.gz"),
+        hotspot=temp("temp/{sid}.hotspot.chr{chrom}.bed.gz"),
     log: "temp/{sid}.ifs.raw.chr{chrom}.log"
     params:
-        label=lambda wildcards: f"hotspot.{wildcards.sid}.chr{wildcards.chrom}",
+        label=lambda wildcards: f"cragr.stage2.{wildcards.sid}.chr{wildcards.chrom}",
         script_home=lambda wildcards: SCRIPT_HOME
     threads: lambda wildcards, input, attempt: int(2 * (0.5 + 0.5 * attempt))
     resources:
@@ -90,7 +90,7 @@ rule hotspot:
         """
         tmpdir=$(mktemp -d)
 
-        Rscript {params.script_home}/cragr.R hotspot \
+        Rscript {params.script_home}/cragr.R stage2 \
         -i {input.ifs} \
         --output-ifs "$tmpdir"/ifs.bedGraph.gz \
         --output-hotspot "$tmpdir"/hotspot.bed.gz \

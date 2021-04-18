@@ -1,8 +1,10 @@
 #' @export
 read_fragments <- function(file_path, range = NULL, genome = NULL) {
+  logging::logdebug("Reading BED data")
   frag <- bedtorch::read_bed(file_path = file_path,
                              range = range,
                              genome = genome)
+  logging::logdebug("Done reading BED data")
   frag_metadata <- mcols(frag)
 
   mapq_guessed <- FALSE

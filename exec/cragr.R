@@ -255,6 +255,7 @@ if (subcommand == "stage1") {
 
   logging::loginfo("Fragments summary:")
   print(frag)
+  log_mem("Done loading fragments")
 
   logging::loginfo("Calculating IFS scores ...")
   ifs <- ifs_score(
@@ -274,20 +275,24 @@ if (subcommand == "stage1") {
 
   logging::loginfo("Raw IFS summary:")
   print(ifs)
+  log_mem("Done calculating raw IFS scores")
+
+  if (script_args$gc_correct) {
+    ifs <- calc_gc(ifs)
+    log_mem("Done calculating GC contents")
+  }
 
   bedtorch::write_bed(ifs, file_path = script_args$output_ifs)
 } else if (subcommand == "stage2") {
-  logging::loginfo("Loading IFS scores ...")
   # Load IFS score from input file
-
-  logging::loginfo(str_interp("Loading IFS scores: ${script_args$input} ..."))
+  logging::loginfo(str_interp("Loading raw IFS scores: ${script_args$input} ..."))
   ifs <- bedtorch::read_bed(script_args$input, genome = script_args$genome)
 
   logging::loginfo("Raw IFS summary:")
   print(ifs)
 
   logging::loginfo("Post-processing raw IFS scores")
-  ifs <- postprocess_ifs(ifs, script_args$chrom, script_args$high_mappability, script_args$gc_correct)
+  ifs <- postprocess_ifs(ifs, script_args$chrom, script_args$gc_correct)
 
   logging::loginfo("Calculating global p-values ...")
   ifs <- calc_pois_pval(ifs, cpois = script_args$cpois)

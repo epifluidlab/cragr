@@ -14,7 +14,8 @@ LazyData: true
 Roxygen: list(markdown = TRUE)
 RoxygenNote: 7.1.1
 Suggests: 
-    testthat (>= 3.0.0)
+    testthat (>= 3.0.0),
+    BSgenome.Hsapiens.1000genomes.hs37d5
 Config/testthat/edition: 3
 URL: https://github.com/haizi-zh/cragr
 biocViews: Sequencing, Epigenetics, Software
@@ -27,7 +28,9 @@ Imports:
     bedr (== 1.0.7.4),
     zoo,
     optparse,
-    Rcpp
+    Rcpp,
+    lobstr,
+    logging
 Remotes: 
     haizi-zh/bedr
 LinkingTo: 

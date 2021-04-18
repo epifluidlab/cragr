@@ -198,37 +198,36 @@ ifs_score <-
 
     log_mem("Done calculating raw IFS")
 
+    # Exclude low-mappability regions
+    logging::loginfo("Excluding low mappability regions ...")
+    if (!is_null(high_mappability_region)) {
+      if (is.character(high_mappability_region)) {
+        high_mappability_region <- bedtorch::read_bed(high_mappability_region, range = chrom)
+      } else {
+        high_mappability_region <-
+          keepSeqlevels(high_mappability_region, chrom, pruning.mode = "coarse")
+      }
+      log_mem("Done loading high mappability regions")
+
+      # Intervals in ifs and high_mappability_region should be exactly matched (200bp window)
+      ifs <- ifs[queryHits(findOverlaps(ifs, high_mappability_region, type = "equal"))]
+      rm(high_mappability_region)
+    }
+
+    log_mem("Done mappability filtering")
+
     ifs
   }
 
 
 #' Postprocess raw IFS scores
 #'
-#' 1. Mappability filter
-#' 2. GC-correction
-#' 3. Calculate z-scores
+#' 1. GC-correction
+#' 2. Calculate z-scores
 #'
 #' This is counter-intuitive, but use much less memory and SU
 #' @export
-postprocess_ifs <- function(ifs, chrom, high_mappability_region, gc_correct) {
-  # Exclude low-mappability regions
-  logging::loginfo("Excluding low mappability regions ...")
-  if (!is_null(high_mappability_region)) {
-    if (is.character(high_mappability_region)) {
-      high_mappability_region <- bedtorch::read_bed(high_mappability_region, range = chrom)
-    } else {
-      high_mappability_region <-
-        keepSeqlevels(high_mappability_region, chrom, pruning.mode = "coarse")
-    }
-    log_mem("Done loading high mappability regions")
-
-    # Intervals in ifs and high_mappability_region should be exactly matched (200bp window)
-    ifs <- ifs[queryHits(findOverlaps(ifs, high_mappability_region, type = "equal"))]
-    rm(high_mappability_region)
-  }
-
-  log_mem("Done mappability filtering")
-
+postprocess_ifs <- function(ifs, chrom, gc_correct) {
   # Don't perform GC correctoion
   if (gc_correct) {
     logging::loginfo("Performing GC correction ...")
@@ -258,29 +257,13 @@ calc_ifs_z_score <- function(ifs) {
 }
 
 
+#' Calculate GC content for each fragment
+#'
+#' @export
 calc_gc <- function(ifs) {
-  gcs <- as.numeric(biovizBase::GCcontent(BSgenome.Hsapiens.UCSC.hg19::Hsapiens, unstrand(frags)))
-  frags$gc <- gcs
-}
-
-
-# Perform GC-correction for IFS scores
-#
-# @param ifs A `data.table` of original IFS scores.
-#   in-place.
-# @param gc A `data.table` of GC contents.
-# @param span `span` used in LOESS fit.
-# @return A `data.table` containing GC-corrected IFS scores/
-# @export
-gc_correct <- function(ifs, span = 0.75) {
-  assertthat::are_equal(length(unique(seqnames(ifs))), 1)
-  # chrom <- as.character(unique(ifs$chrom))
-  # assertthat::are_equal(length(chrom), 1)
-  # assertthat::are_equal(chrom, as.character(unique(gc$chrom)))
-
   genome <- GenomeInfoDb::genome(ifs) %>% unique()
   # Only works for hs37-1kg
-  stopifnot(genome == "hs37-1kg")
+  assertthat::are_equal(genome, "hs37-1kg")
   bsgenome <- BSgenome.Hsapiens.1000genomes.hs37d5::hs37d5
 
   # Dirty hack: need to adjust the seqinfo
@@ -295,11 +278,30 @@ gc_correct <- function(ifs, span = 0.75) {
   # Restore the seqinfo
   seqinfo(ifs, new2old = match(levels_hs37_1kg, levels_bsgenome)) <- seqinfo_hs37_1kg
 
+  ifs
+}
+
+
+#' Perform GC-correction for IFS scores
+#'
+#' @param span `span` used in LOESS fit.
+#' @param max_training_dataset LOESS can be slow for a large dataset. If it
+#'   contains more data points than this parameter, we will sample a subset and
+#'   do the training.
+#' @export
+gc_correct <- function(ifs, span = 0.75, max_training_dataset = 2e6L) {
+  assertthat::are_equal(length(unique(seqnames(ifs))), 1)
+  assertthat::assert_that("gc" %in% colnames(mcols(ifs)))
+
   ifs$score0 <- ifs$score
 
   # Use all points
-  logging::loginfo(str_interp("Training using LOESS mode, total n = ${length(ifs)}"))
-  train_data <- data.table::data.table(gc = ifs$gc, score0 = ifs$score0) %>% slice_sample(n = 2e6L)
+  if (length(ifs) > max_training_dataset)
+    logging::loginfo(str_interp("Training using LOESS mode, total n = ${length(ifs)}, subsample n = ${max_training_dataset}"))
+  else
+    logging::loginfo(str_interp("Training using LOESS mode, total n = ${length(ifs)}"))
+
+  train_data <- data.table::data.table(gc = ifs$gc, score0 = ifs$score0) %>% slice_sample(n = max_training_dataset)
   model <-
     loess(
       formula = score0 ~ gc,
@@ -329,83 +331,16 @@ gc_correct <- function(ifs, span = 0.75) {
   }
   logging::loginfo("Finished performing GC correction")
   ifs
-
-  # #
-  # #
-  # # # Implement this using foverlaps
-  # # ifs[, start := start + 1]
-  # # gc[, start := start + 1]
-  # # data.table::setkey(ifs, "chrom", "start", "end")
-  # # data.table::setkey(gc, "chrom", "start", "end")
-  # # overlap_idx <-
-  # #   data.table::foverlaps(gc,
-  # #                         ifs,
-  # #                         type = "any",
-  # #                         which = TRUE,
-  # #                         nomatch = NULL)
-  # # # x: gc, y: 200bp window
-  # # overlap_idx[, gc := gc[xid]$score]
-  # # overlap_idx[, gc := mean(gc), by = yid]
-  # #
-  # # ifs[, start := start - 1]
-  # # gc[, start := start - 1]
-  # # data.table::setkey(ifs, "chrom", "start", "end")
-  # # data.table::setkey(gc, "chrom", "start", "end")
-  # # ifs <- ifs[overlap_idx$yid, gc := overlap_idx$gc]
-  # #
-  # # data.table::setnames(ifs, "score", "score0")
-  #
-  # # Use all points
-  # logging::loginfo(str_interp("Training using LOESS mode, total n = ${nrow(ifs)}"))
-  # train_data <- ifs[, .(gc, score0)] %>% slice_sample(n = 2e6L)
-  # model <-
-  #   loess(
-  #     formula = score0 ~ gc,
-  #     data = train_data,
-  #     control = loess.control(
-  #       surface = "interpolate",
-  #       statistics = "approximate",
-  #       trace.hat = "approximate"
-  #     )
-  #   )
-  # rm(train_data)
-  # logging::loginfo("Finished training")
-  # logging::loginfo("Applying the model for GC correction ...")
-  # ifs[, score := score0 - predict(model, newdata = gc) + mean(score0)]
-  # # ifs[, score := model$residuals + mean(score0)]
-  #
-  # # train_data <- ifs[score0 > 0][1:20e3L, .(gc, score0)]
-  # # model <- loess(formula = score0 ~ gc, data = train_data)
-  # # ifs[score0 > 0, score := score0 - predict(model, newdata = gc) + mean(score0)]
-  #
-  # ifs[score < 0, score := 0]
-  #
-  #
-  # # In rare cases, GC-corrected scores can be NA. Don't know why.
-  # # Here we drop out any of those
-  # na_score_idx <- ifs[, is.na(score)]
-  # if (any(na_score_idx)) {
-  #   logging::logwarn(str_interp("Excluded ${sum(na_score_idx)} records with NA scores"))
-  #   ifs <- ifs[!na_score_idx]
-  # }
-  # logging::loginfo("Finished performing GC correction")
-  #
-  # # # Also perform GC-correction for coverage
-  # # ifs[score > 0, cov_corrected := cov - lowess(x = gc, y = cov, f = span)$y + mean(cov)]
-  # # ifs[is.na(cov_corrected), cov_corrected := 0]
-  #
-  # # ifs[, .(chrom, start, end, score, cov, gc, score0)]
-  # ifs[]
 }
 
 
-#' Perform a sliding window over raw IFS scores
-#'
-#' Raw IFS scores are calculated for each `step_size` bin. This function
-#' performs a sliding window with the width of `window_size`. Each window
-#' contains a whole number of `step_size` bins.
-#' @param window_size Width of the sliding window. Must be multiples of `step_size`.
-#' @param step_size Incremental steps of the sliding window.
+# Perform a sliding window over raw IFS scores
+#
+# Raw IFS scores are calculated for each `step_size` bin. This function
+# performs a sliding window with the width of `window_size`. Each window
+# contains a whole number of `step_size` bins.
+# @param window_size Width of the sliding window. Must be multiples of `step_size`.
+# @param step_size Incremental steps of the sliding window.
 slide_window <- function(ifs, window_size, step_size) {
   assertthat::are_equal(window_size %% step_size, 0)
   assertthat::are_equal(length(unique(ifs$chrom)), 1)
@@ -787,7 +722,6 @@ calc_pois_pval_local <- function(ifs, window_size, step_size, local_layout, cpoi
 #' Call hotspots based on pvalues (and merge)
 #' @export
 call_hotspot <- function(ifs, use_cpois = FALSE, fdr_cutoff = 0.01, pval_cutoff = 1e-5, local_pval_cutoff = 1e-5, merge_distance = 200) {
-  browser()
   ifs <- bedtorch::as.bedtorch_table(ifs)
   ifs <-
     ifs[, .(chrom,

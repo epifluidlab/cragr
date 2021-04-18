@@ -4,11 +4,10 @@
 \alias{postprocess_ifs}
 \title{Postprocess raw IFS scores}
 \usage{
-postprocess_ifs(ifs, chrom, high_mappability_region, gc_correct)
+postprocess_ifs(ifs, chrom, gc_correct)
 }
 \description{
 \enumerate{
-\item Mappability filter
 \item GC-correction
 \item Calculate z-scores
 }
