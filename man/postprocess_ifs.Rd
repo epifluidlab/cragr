@@ -2,16 +2,20 @@
 % Please edit documentation in R/ifs.R
 \name{postprocess_ifs}
 \alias{postprocess_ifs}
-\title{Postprocess raw IFS scores}
+\title{Post-process raw IFS scores}
 \usage{
-postprocess_ifs(ifs, chrom, gc_correct)
+postprocess_ifs(ifs, gc_correct = TRUE)
+}
+\arguments{
+\item{ifs}{Result returned by \code{ifs_score()}.}
+
+\item{gc_correct}{A logical value indicating whether to perform
+GC-correction.}
 }
 \description{
+From result from \code{ifs_score()}:
 \enumerate{
-\item GC-correction
+\item Perform GC-correction
 \item Calculate z-scores
 }
-}
-\details{
-This is counter-intuitive, but use much less memory and SU
 }

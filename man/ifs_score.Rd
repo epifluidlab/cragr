@@ -2,7 +2,7 @@
 % Please edit documentation in R/ifs.R
 \name{ifs_score}
 \alias{ifs_score}
-\title{Calculate IFS scores}
+\title{Calculate raw IFS scores}
 \usage{
 ifs_score(
   fragment_data,
@@ -24,7 +24,8 @@ ifs_score(
 \item{chrom}{Calculate IFS scores for certain chromosomes. If \code{NULL}, all
 chromosomes in \code{fragment_data} will be used.}
 
-\item{window_size}{Width of the sliding window. Must be multiples of \code{step_size}.}
+\item{window_size}{Width of the sliding window. Must be multiples of
+\code{step_size}.}
 
 \item{step_size}{Incremental steps of the sliding window.}
 
@@ -35,13 +36,15 @@ the corresponding \code{BSgenome} should be present. Currently, only support
 \item{blacklist_region}{Those fragments whose midpoint fall within any of the
 excluded regions will not be used in the analysis. \code{blacklist_region} can
 be either a character vector that contains the names of the files defining
-the regions (should be in BED format), a \code{data.table} object, or a list of
-\code{data.table} objects.}
+the regions (should be in BED format), a \code{GRanges} object, or a list of
+\code{GRanges} objects.}
 
-\item{high_mappability_region}{A \code{data.table} object of mappability scores, or a
-character vector of the mappability score file path.}
+\item{high_mappability_region}{Regions with high mappability scores. Only the
+windows within such regions with be used in the analysis. Must be a
+\code{GRanges}, or path of the BED file path.}
 
-\item{min_mapq}{Exclude fragments whose \code{MAPQ} scores are smaller than \code{min_mapq}.}
+\item{min_mapq}{Exclude fragments whose \code{MAPQ} scores are smaller than
+\code{min_mapq}.}
 
 \item{min_fraglen}{Exclude fragments shorter than \code{min_fraglen}.}
 
@@ -51,10 +54,8 @@ character vector of the mappability score file path.}
 inferred lengths are less reliable. If \code{TRUE}, such fragments will be
 excluded from the analysis. \code{cigar1} and \code{cigar2} should be present in the
 dataset.}
-
-\item{mappability_threshold}{The mappability score threshold, below which the
-region is considered as low-mappability and excluded from analysis.}
 }
 \description{
-Calculate IFS scores
+Calculate raw IFS scores from coverage and fragment length, and do the
+mappability filtering.
 }

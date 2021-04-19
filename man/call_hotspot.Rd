@@ -13,6 +13,9 @@ call_hotspot(
   merge_distance = 200
 )
 }
+\arguments{
+\item{use_cpois}{Currently must be \code{FALSE}.}
+}
 \description{
 Call hotspots based on pvalues (and merge)
 }

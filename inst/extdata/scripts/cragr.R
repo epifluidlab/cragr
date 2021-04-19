@@ -1,5 +1,3 @@
-
-
 stop_quietly <- function() {
   opt <- options(show.error.messages = FALSE)
   on.exit(options(opt))
@@ -7,8 +5,11 @@ stop_quietly <- function() {
 }
 
 write_ifs_as_bedgraph <- function(ifs, script_args, comments) {
-  # This is ifs. Each row corresponds to a 200bp region, and they are overlapping.
-  # We're more interested in a BEDGRAPH-style non-overlapping track
+  # In IFS, each row corresponds to a 200bp region, and they are overlapping.
+  # This is not a bedGraph track.
+  #
+  # We're more interested in a bedGraph-style non-overlapping track
+  #
   #    chrom    start      end    score cov mappability    gc   score0 cov_corrected      pval pval_adjust pval_cpois pval_cpois_adjust
   # 1:    21  9412520  9412720 27.58913   9   0.9050833 0.295 17.90432      13.78962 0.9599079           1  0.9611725                 1
   # 2:    21  9412540  9412740 29.36389  10   0.9750000 0.290 19.67908      14.78962 0.9841276           1  0.9828842                 1
@@ -35,17 +36,15 @@ write_ifs_as_bedgraph <- function(ifs, script_args, comments) {
   #   relocate(c(z_score, score), .after = end) %>% select(-gc, -mappability)
   # GenomicRanges::mcols(ifs) <- df
 
-  bedtorch::write_bed(
-    ifs,
-    file_path = script_args$output_ifs,
-    comments = comments
-  )
+  bedtorch::write_bed(ifs,
+                      file_path = script_args$output_ifs,
+                      comments = comments)
 }
 
 
 log_mem <- function(label = "Unknown") {
   if (requireNamespace("lobstr")) {
-    mem <- as.numeric(lobstr::mem_used()) / 1024**2
+    mem <- as.numeric(lobstr::mem_used()) / 1024 ** 2
     logging::logdebug(str_interp("[${label}] Memory used: ${mem} MB"))
   }
 }
@@ -140,7 +139,11 @@ if (interactive()) {
         default = FALSE,
         help = "Exclude fragments with leading soft-clipping from the analysis"
       ),
-      optparse::make_option(c("-w", "--window-size"), default = 200L, help = "Size of the sliding window. Default is 200"),
+      optparse::make_option(
+        c("-w", "--window-size"),
+        default = 200L,
+        help = "Size of the sliding window. Default is 200"
+      ),
       optparse::make_option(c("-s", "--step-size"), default = 20L, help = "Step size of the sliding window. Default is 20"),
       optparse::make_option(
         c("--cpois"),
@@ -162,11 +165,9 @@ if (interactive()) {
   )
 
   script_args <-
-    optparse::parse_args(
-      parser,
-      args = args,
-      convert_hyphens_to_underscores = TRUE
-    )
+    optparse::parse_args(parser,
+                         args = args,
+                         convert_hyphens_to_underscores = TRUE)
 
   library(tidyverse)
   library(magrittr)
@@ -174,7 +175,8 @@ if (interactive()) {
 
   # Process arguments
   if ("input" %in% names(script_args)) {
-    script_args$input <- str_split(script_args$input, pattern = ":")[[1]]
+    script_args$input <-
+      str_split(script_args$input, pattern = ":")[[1]]
   }
 
   if (!("chrom" %in% names(script_args)))
@@ -189,7 +191,11 @@ if (interactive()) {
       }
     })
 
-  c("min_mapq", "min_fraglen", "max_fraglen", "window_size", "step_size") %>%
+  c("min_mapq",
+    "min_fraglen",
+    "max_fraglen",
+    "window_size",
+    "step_size") %>%
     walk(function(arg) {
       if (!is_null(script_args))
         script_args[[arg]] <<- as.numeric(script_args[[arg]])
@@ -229,7 +235,8 @@ if (script_args$verbose)
 library(here)
 
 logging::loginfo(str_interp("Argument summary:"))
-comments %>% purrr::walk(function(v) logging::loginfo(v))
+comments %>% purrr::walk(function(v)
+  logging::loginfo(v))
 
 if (subcommand == "stage1") {
   logging::loginfo("Input: fragment data")
@@ -286,13 +293,15 @@ if (subcommand == "stage1") {
 } else if (subcommand == "stage2") {
   # Load IFS score from input file
   logging::loginfo(str_interp("Loading raw IFS scores: ${script_args$input} ..."))
-  ifs <- bedtorch::read_bed(script_args$input, genome = script_args$genome)
+  ifs <-
+    bedtorch::read_bed(script_args$input, genome = script_args$genome)
 
   logging::loginfo("Raw IFS summary:")
   print(ifs)
 
   logging::loginfo("Post-processing raw IFS scores")
-  ifs <- postprocess_ifs(ifs, script_args$chrom, script_args$gc_correct)
+  ifs <-
+    postprocess_ifs(ifs, script_args$chrom, script_args$gc_correct)
 
   logging::loginfo("Calculating global p-values ...")
   ifs <- calc_pois_pval(ifs, cpois = script_args$cpois)
@@ -330,12 +339,27 @@ if (subcommand == "stage1") {
     if (is.null(hotspot_cpois)) {
       # When no hotspots have been called
       local({
-        fields <- c("chrom","start","end","name","z_score","score","pval","pval_adjust","pval_local","cov","score0")
+        fields <-
+          c(
+            "chrom",
+            "start",
+            "end",
+            "name",
+            "z_score",
+            "score",
+            "pval",
+            "pval_adjust",
+            "pval_local",
+            "cov",
+            "score0"
+          )
         fields %>% as.list() %>% data.table::as.data.table() %>% magrittr::set_colnames(fields) %>% filter(chrom != chrom)
       }) -> hotspot_cpois
     }
     n_hotspot <- nrow(hotspot_cpois)
-    logging::loginfo(str_interp("Called ${n_hotspot} hotspots using continuous Poisson model"))
+    logging::loginfo(str_interp(
+      "Called ${n_hotspot} hotspots using continuous Poisson model"
+    ))
   }
 
   hotspot_standard <-
@@ -362,11 +386,9 @@ if (subcommand == "stage1") {
 
     logging::loginfo("Writing results to disk ...")
 
-    bedtorch::write_bed(
-      hotspot_standard,
-      file_path = script_args$output_hotspot,
-      comments = comments
-    )
+    bedtorch::write_bed(hotspot_standard,
+                        file_path = script_args$output_hotspot,
+                        comments = comments)
 
     if (script_args$cpois) {
       stop()

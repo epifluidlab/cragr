@@ -8,6 +8,8 @@ calc_pois_pval_local(ifs, window_size, step_size, local_layout, cpois = FALSE)
 }
 \arguments{
 \item{local_layout}{Example: list(\verb{5k} = 5000L, \verb{10k} = 10000L)}
+
+\item{cpois}{Currently must be \code{FALSE}.}
 }
 \description{
 Calculate local p-values based on Poisson model for each window

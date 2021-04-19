@@ -6,6 +6,10 @@
 \usage{
 calc_gc(ifs)
 }
+\arguments{
+\item{ifs}{A \code{GRanges} object. In order to calculate GC content, \code{ifs} must
+have a valid genome. Currently, only hs37-1kg is supported. Furthermore, you need}
+}
 \description{
 Calculate GC content for each fragment
 }

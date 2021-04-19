@@ -8,7 +8,7 @@ calc_pois_pval(ifs, cpois = FALSE, threshold = 1e-05)
 }
 \arguments{
 \item{cpois}{A logical value indicating whether to calculate p-values based
-on continuous Poisson model.}
+on continuous Poisson model. Currently, must be \code{FALSE}.}
 }
 \description{
 Calculate p-values based on Poisson model for each window
