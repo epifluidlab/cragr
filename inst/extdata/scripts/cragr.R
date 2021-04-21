@@ -86,7 +86,7 @@ if (interactive()) {
   subcommand <- args[1]
   args <- args[-1]
 
-  if (!subcommand %in% c("stage1", "stage2"))
+  if (!subcommand %in% c("stage1", "stage2", "test-1"))
     stop("Subcommand should be one of the following: stage1, stage2")
 
   # Run in CLI script mode
@@ -151,7 +151,7 @@ if (interactive()) {
         default = FALSE,
         help = "Use continuous Poisson model to call hotspots"
       ),
-      optparse::make_option(c("--fdr"), default = 0.01, help = "FDR cut-off value used in hotspot calling. Default is 0.01"),
+      optparse::make_option(c("--fdr"), default = 0.2, help = "FDR cut-off value used in hotspot calling. Default is 0.2"),
       optparse::make_option(c("--local-pval"), default = 1e-5, help = "Threshold for local p-values to call hotspots. Default is 1e-5"),
       optparse::make_option(
         c("--merge-distance"),
@@ -369,6 +369,111 @@ if (subcommand == "stage1") {
       fdr_cutoff = script_args$fdr,
       pval_cutoff = script_args$local_pval,
       local_pval_cutoff = script_args$local_pval,
+      merge_distance = script_args$merge_distance
+    )
+
+  if (is.null(hotspot_standard)) {
+    logging::loginfo("Called 0 hotspots")
+    # When no hotspots have been called
+    # local({
+    #   fields <- c("chrom","start","end","name","z_score","score","pval","pval_adjust","pval_local","cov","score0")
+    #   fields %>% as.list() %>% data.table::as.data.table() %>% magrittr::set_colnames(fields) %>% filter(chrom != chrom)
+    # }) %>% bedtorch::write_bed(file_path = script_args$output_hotspot, comments = comments)
+    system(str_interp("touch ${script_args$output_hotspot}"))
+  } else {
+    n_hotspot <- length(hotspot_standard)
+    logging::loginfo(str_interp("Called ${n_hotspot} hotspots"))
+
+    logging::loginfo("Writing results to disk ...")
+
+    bedtorch::write_bed(hotspot_standard,
+                        file_path = script_args$output_hotspot,
+                        comments = comments)
+
+    if (script_args$cpois) {
+      stop()
+      write_bed(
+        hotspot_cpois,
+        file_path = str_interp("${script_args$prefix}.hotspot.cpois.bed.gz"),
+        create_index = TRUE
+      )
+    }
+  }
+} else if (subcommand == "test-1") {
+  # This is a test. Start from the final IFS, remove all columns after gc/score0,
+  # and then redo the rest (p-value calculation & hotspot calling)
+  # Load IFS score from input file
+  logging::loginfo(str_interp("Loading raw IFS scores: ${script_args$input} ..."))
+  ifs <-
+    bedtorch::read_bed(script_args$input, genome = script_args$genome)
+
+  logging::loginfo("Raw IFS summary:")
+  print(ifs)
+
+
+  logging::loginfo("Calculating global p-values ...")
+  ifs <- calc_pois_pval(ifs, cpois = script_args$cpois)
+  log_mem("Done calculating global p-values")
+
+  logging::loginfo("Calculating local p-values ...")
+  ifs <-
+    calc_pois_pval_local(
+      ifs,
+      cpois = script_args$cpois,
+      window_size = script_args$window_size,
+      step_size = script_args$step_size,
+      local_layout = list(`5k` = 5e3L, `10k` = 10e3L)
+    )
+  log_mem("Done calculating local p-values")
+
+  logging::loginfo("IFS summary:")
+  print(ifs)
+
+  write_ifs_as_bedgraph(ifs, script_args, comments)
+
+  logging::loginfo("Calling hotspots ...")
+
+  if (script_args$cpois) {
+    stop()
+    hotspot_cpois <-
+      call_hotspot(
+        ifs,
+        use_cpois = TRUE,
+        fdr_cutoff = script_args$fdr,
+        pval_cutoff = script_args$local_pval,
+        local_pval_cutoff = script_args$local_pval,
+        merge_distance = script_args$merge_distance
+      )
+    if (is.null(hotspot_cpois)) {
+      # When no hotspots have been called
+      local({
+        fields <-
+          c(
+            "chrom",
+            "start",
+            "end",
+            "name",
+            "z_score",
+            "score",
+            "pval",
+            "pval_adjust",
+            "pval_local",
+            "cov",
+            "score0"
+          )
+        fields %>% as.list() %>% data.table::as.data.table() %>% magrittr::set_colnames(fields) %>% filter(chrom != chrom)
+      }) -> hotspot_cpois
+    }
+    n_hotspot <- nrow(hotspot_cpois)
+    logging::loginfo(str_interp(
+      "Called ${n_hotspot} hotspots using continuous Poisson model"
+    ))
+  }
+
+  hotspot_standard <-
+    call_hotspot_fdr(
+      ifs,
+      fdr_cutoff = script_args$fdr,
       merge_distance = script_args$merge_distance
     )
 

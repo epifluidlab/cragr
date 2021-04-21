@@ -595,6 +595,26 @@ build_exclude_region <-
 pcpois <- .build_pcpois()
 
 
+# @param mark if TRUE, return a logical vector indicating positions of outliers
+exclude_outlier <- function(x, mark = FALSE, threshold = 3.5) {
+  if (length(x) < 10)
+    return(x)
+
+  mad_x <- mad(x)
+  n1 <- length(x)
+
+  if (mark)
+    return(abs(x - median(x)) >= threshold * mad_x)
+
+  x <- x[abs(x - median(x)) < threshold * mad_x]
+  n2 <- length(x)
+  if (n2 / n1 < 0.9) {
+    logging::logwarn(str_interp("Outlier exclusion: #${n1} -> #${n2}. Pass rate: ${n2/n1}"))
+  }
+  x
+}
+
+
 #' Calculate p-values based on Poisson model for each window
 #'
 #' @param cpois A logical value indicating whether to calculate p-values based
@@ -602,48 +622,42 @@ pcpois <- .build_pcpois()
 #' @export
 calc_pois_pval <- function(ifs,
                            cpois = FALSE,
+                           # model = c("poisson", "negbinom"),
                            threshold = 1e-5) {
   assertthat::assert_that(!cpois)
+  # model <- match.arg(model)
+  # model <- c("poisson", "negbinom")
+
+  # Calculate p-values using Poisson model
+  pval_ppois <- function(x) {
+    x_no_outlier <- exclude_outlier(x)
+    stats::ppois(x, lambda = mean(x_no_outlier))
+  }
+
+  # Calculate p-values using negative binomial model
+  pval_pnbinom <- function(x) {
+    x_no_outlier <- exclude_outlier(x)
+    prob <- mean(x_no_outlier) / var(x_no_outlier)
+    size <-
+      (mean(x_no_outlier) ** 2) / var(x_no_outlier) / (1 - prob)
+    stats::pnbinom(x, size = size, prob = prob)
+  }
+
   # Standard Poisson model
   grl <- GenomicRanges::split(ifs, seqnames(ifs))
   log_mem("Done spliting IFS data frame")
   grl %>%
     lapply(function(gr) {
-      gr$pval <- ppois(gr$score, lambda = mean(gr$score))
-      gr$pval_adjust <- p.adjust(gr$pval, method = "BH")
+      if (length(gr) == 0)
+        return(gr)
+
+      gr$pval_pois <- pval_ppois(gr$score)
+      gr$pval_nbinom <- pval_pnbinom(gr$score)
+      # gr$pval_adjust <- p.adjust(gr$pval, method = "BH")
       gr
     }) %>%
     GenomicRanges::GRangesList() %>%
     unlist()
-
-  #
-  #   # # Alternatively, use MAD-outlier detection
-  #   # ifs[, pval := {
-  #   #   score_median <- median_score
-  #   #   mad <- median(abs(score - score_median))
-  #   #   score_filtered <- score %>% discard(function(x) abs(x - score_median) > 3 * mad)
-  #   #   lambda <- mean(score_filtered)
-  #   #   ppois(score, lambda = lambda)
-  #   # }]
-  #
-  #   # Only those pval <= threshld are used in p-value adjustment
-  #   ifs[, pval_adjust := {
-  #     # v <- ifelse(pval > threshold, 1, pval)
-  #     p.adjust(pval, method = "BH")
-  #   },
-  #   by = chrom]
-  #
-  #   if (cpois) {
-  #     ifs[, pval_cpois := pcpois(score, lambda = mean(score)), by = chrom]
-  #
-  #     # Only those pval <= threshld are used in p-value adjustment
-  #     ifs[, pval_cpois_adjust := {
-  #       # v <- ifelse(pval_cpois > threshold, 1, pval_cpois)
-  #       p.adjust(pval, method = "BH")
-  #     },
-  #     by = chrom]
-  #   }
-  #   ifs
 }
 
 
@@ -663,7 +677,13 @@ calc_pois_pval_local <-
 
     # Use data.table for the calculation
     seqinfo_original <- seqinfo(ifs)
+    # Must have seqinfo
+    assertthat::assert_that(all(!is.na(GenomeInfoDb::genome(seqinfo_original))))
+
     ifs <- bedtorch::as.bedtorch_table(ifs)
+    # Mark outliers for each chromosome
+    ifs[, is_outlier := exclude_outlier(score, mark = TRUE), by = chrom]
+
     # Construct a continuous IFS score track, with filled 0s.
     scaffold <-
       ifs[, .(start = seq(min(start), max(start), by = step_size)), by = chrom][, end := start + window_size]
@@ -680,48 +700,88 @@ calc_pois_pval_local <-
     local_peaks <-
       ifs_expanded[,
         {
+          # Exclude these outliers in the following analysis
+          outlier_idx <- exclude_outlier(score, mark = TRUE)
+
           valid_score_idx <- !is.na(score)
 
+          # Used for var calculation
+          score_sq <- score ** 2
+
           results <-
-            local_layout %>% map(function(local_width) {
+            names(local_layout) %>% map(function(local_suffix) {
+          # results <-
+            # local_layout %>% map(function(local_width) {
+              local_width <- local_layout[[local_suffix]]
+
+              # Outer rim: center -       outer_shift -> center -> center      +       outer_shift
+              # Inner rim:       center - inner_shift -> center -> center + inner_shift
+              #
+              # Only use outer_rim - inner_rim to determin the background
+              outer_shift <- as.integer(local_width / step_size / 2)
+              inner_shift <- as.integer(window_size / step_size)
+
               # local_width: may be 5000L or 10000L
               # Local means over the 5k/10k region
               outer_sum <- bedtorch::rollsum(
-                score,
-                k = local_width %/% step_size,
+                ifelse(is_outlier, NA, score),
+                k = 2 * outer_shift,# + 1,
                 na_pad = TRUE,
                 align = "center",
                 na.rm = TRUE
               )
               inner_sum <- bedtorch::rollsum(
-                score,
-                k = window_size %/% step_size * 2,
+                ifelse(is_outlier, NA, score),
+                k = 2 * inner_shift,# + 1,
+                na_pad = TRUE,
+                align = "center",
+                na.rm = TRUE
+              )
+              outer_sum_sq <- bedtorch::rollsum(
+                ifelse(is_outlier, NA, score_sq),
+                k = 2 * outer_shift,# + 1,
+                na_pad = TRUE,
+                align = "center",
+                na.rm = TRUE
+              )
+              inner_sum_sq <- bedtorch::rollsum(
+                ifelse(is_outlier, NA, score_sq),
+                k = 2 * inner_shift,# + 1,
                 na_pad = TRUE,
                 align = "center",
                 na.rm = TRUE
               )
 
+
               # How many valid 200-bp windows in the 5k/10 rolling region?
               outer_count <- bedtorch::rollsum(
-                as.integer(!is.na(score)),
-                k = local_width %/% step_size,
+                as.integer(!is.na(score) & !is.na(is_outlier) & !is_outlier),
+                k = 2 * outer_shift,# + 1,
                 na_pad = TRUE,
                 align = "center"
               )
               inner_count <- bedtorch::rollsum(
-                as.integer(!is.na(score)),
-                k = window_size %/% step_size * 2,
+                as.integer(!is.na(score) & !is.na(is_outlier) & !is_outlier),
+                k = 2 * inner_shift,# + 1,
                 na_pad = TRUE,
                 align = "center"
               )
               valid_count <- outer_count - inner_count
+
               score_rollmean <-
                 ifelse(!is.na(valid_count) &
-                  valid_count > 0,
+                  valid_count > 1,
                 (outer_sum - inner_sum) / valid_count,
                 NA
                 )
               score_rollmean[score_rollmean < 0] <- 0
+
+              score_sq_rollmean <-
+                ifelse(!is.na(valid_count) &
+                         valid_count > 1,
+                       (outer_sum_sq - inner_sum_sq) / valid_count, NA)
+              score_sq_rollmean[score_sq_rollmean < 0] <- 0
+              score_rollvar <- valid_count/(valid_count - 1) * (score_sq_rollmean - score_rollmean**2)
 
 
               # After calculating rollmean and valid_count, we can safely remove
@@ -729,89 +789,82 @@ calc_pois_pval_local <-
               # purposes
               score_rollmean <-
                 score_rollmean[valid_score_idx]
+              score_rollvar <-
+                score_rollvar[valid_score_idx]
               valid_count <- valid_count[valid_score_idx]
               score <- score[valid_score_idx]
 
               # Only consider regions with sufficient ...
               valid_roll_idx <-
                 !is.na(valid_count) &
-                  (valid_count >= 30) &
-                  !is.na(score_rollmean)
+                (valid_count >= 30) &
+                !is.na(score_rollmean) &
+                !is.na(score_rollvar)
 
               results <- list()
-              # By default, the p-value is 1
-              results$pval <-
-                rep(1, length(score_rollmean))
-              results$pval[valid_roll_idx] <-
-                ppois(score[valid_roll_idx], score_rollmean[valid_roll_idx])
-              results$pval[is.na(valid_count) |
-                is.na(score_rollmean)] <- NA
 
-              if (cpois) {
-                results$pval_cpois <-
-                  rep(1, length(score_rollmean))
-                results$pval_cpois[valid_roll_idx] <-
-                  pcpois(score[valid_roll_idx], score_rollmean[valid_roll_idx])
-                results$pval_cpois[is.na(valid_count) |
-                  is.na(score_rollmean)] <-
-                  NA
-              }
+              v <- rep(NA, length(score_rollmean))
+              v[valid_roll_idx] <- ppois(score[valid_roll_idx],
+                                         lambda = score_rollmean[valid_roll_idx])
+              results[[paste0("pval_pois_", local_suffix)]] <- v
+
+              v <- rep(NA, length(score_rollmean))
+              nbinom_mu <- score_rollmean[valid_roll_idx]
+              nbinom_var <- score_rollvar[valid_roll_idx]
+              nbinom_size <- ifelse(
+                # in these cases we can't infer the nbinom distribution
+                nbinom_var == nbinom_mu | nbinom_var < nbinom_mu,
+                NA,
+                nbinom_mu ** 2 / (nbinom_var - nbinom_mu)
+              )
+
+              v[valid_roll_idx] <- pnbinom(score[valid_roll_idx],
+                                           mu = nbinom_mu,
+                                           size = nbinom_size)
+
+              results[[paste0("pval_nbinom_", local_suffix)]] <- v
+
+              results[[paste0("mu_", local_suffix)]] <- score_rollmean
+              results[[paste0("var_", local_suffix)]] <- score_rollvar
 
               results
             })
 
-          # results: a list. Each element: 5kb and 10k, in which: pval_* and pval_cpois_*
-          # Compare 5k and 10k local probabilities and find the maximum
-          pval_local <- local({
-            # Column: `5k` or `10k`
-            mat <-
-              results %>%
-              map(~ .$pval) %>%
-              unlist() %>%
-              matrix(ncol = length(results))
-            apply(
-              mat,
-              MARGIN = 1,
-              FUN = function(v) {
-                ifelse(all(is.na(v)), NA, max(v, na.rm = TRUE))
-              }
-            )
-          })
-
-          pval_results <-
-            list(
-              start = start[valid_score_idx],
-              end = end[valid_score_idx],
-              pval_local = pval_local
-            )
-
-          if (cpois) {
-            pval_cpois_local <- local({
-              # Column: `5k` or `10k`
-              mat <-
-                results %>%
-                map(~ .$pval_cpois) %>%
-                unlist() %>%
-                matrix(ncol = length(results))
-              apply(
-                mat,
-                MARGIN = 1,
-                FUN = function(v) {
-                  ifelse(all(is.na(v)), NA, max(v, na.rm = TRUE))
-                }
-              )
-            })
-            pval_results$pval_cpois_local <-
-              pval_cpois_local
-          }
-
-          pval_results
+          # Example:
+          #
+          # List of 8
+          # $ pval_pois_5k   : num [1:1323099] NA NA NA 1 1 1 1 1 1 1 ...
+          # $ pval_nbinom_5k : num [1:1323099] NA NA NA NaN NaN NaN NaN NaN NaN NaN ...
+          # $ mu_5k          : num [1:1323099] NA NA NA 0 0 0 0 0 0 0 ...
+          # $ var_5k         : num [1:1323099] NA NA NA 0 0 0 0 0 0 0 ...
+          # $ pval_pois_10k  : num [1:1323099] NA NA NA 0.897 0.889 ...
+          # $ pval_nbinom_10k: num [1:1323099] NA NA NA 0.905 0.897 ...
+          # $ mu_10k         : num [1:1323099] NA NA NA 0.108 0.118 ...
+          # $ var_10k        : num [1:1323099] NA NA NA 0.127 0.139 ...
+          results <- do.call(c, args = results)
+          c(
+            list(start = start[valid_score_idx],
+                 end = end[valid_score_idx]),
+            names(results) %>%
+              map(function(name)
+                results[[name]]) %>%
+              set_names(names(results))
+          )
         },
         by = chrom
       ]
     data.table::setkey(local_peaks, "chrom", "start", "end")
 
     ifs <- ifs[local_peaks]
+
+    # Aggregate all kind of p-values and take the maximum
+    pval_cols <- c("pval_nbinom", paste0("pval_nbinom_", names(local_layout)))
+
+    ifs[, `:=`(is_outlier = NULL,
+               pval = do.call(pmax, args = pval_cols %>% map(function(x) ifs[[x]])))]
+    ifs[, pval_adjust := p.adjust(pval, method = "BH")]
+
+
     ifs <- bedtorch::as.GenomicRanges(ifs)
 
     levels_original <- seqlevels(seqinfo_original)
@@ -821,6 +874,77 @@ calc_pois_pval_local <-
 
     ifs
   }
+
+
+#' Call hotspots using FDR only
+#' @export
+call_hotspot_fdr <- function(ifs, fdr_cutoff = 0.2, merge_distance = 200, merge = FALSE) {
+  ifs <- bedtorch::as.bedtorch_table(ifs)
+  ifs <-
+    ifs[, .(
+      chrom,
+      start,
+      end,
+      z_score,
+      score,
+      pval,
+      pval_adjust,
+      cov,
+      score0
+    )]
+
+  hotspot <- ifs[!is.na(pval_adjust) & pval_adjust < fdr_cutoff]
+
+  if (nrow(hotspot) == 0) {
+    # hotspot is empty
+    return(NULL)
+  }
+
+  if (!merge)
+    return(hotspot)
+
+  bedtorch::merge_bed(
+    bedtorch::as.GenomicRanges(hotspot),
+    operation = list(
+      z_score = list(
+        on = "z_score",
+        func = function(x) {
+          mean(x, na.rm = TRUE)
+        }
+      ),
+      score = list(
+        on = "score",
+        func = function(x) {
+          mean(x, na.rm = TRUE)
+        }
+      ),
+      pval = list(
+        on = "pval",
+        func = function(x) {
+          max(x, na.rm = TRUE)
+        }
+      ),
+      pval_adjust = list(
+        on = "pval_adjust",
+        func = function(x) {
+          max(x, na.rm = TRUE)
+        }
+      ),
+      cov = list(
+        on = "cov",
+        func = function(x) {
+          mean(x, na.rm = TRUE)
+        }
+      ),
+      score0 = list(
+        on = "score0",
+        func = function(x) {
+          mean(x, na.rm = TRUE)
+        }
+      )
+    )
+  )
+}
 
 
 #' Call hotspots based on pvalues (and merge)
