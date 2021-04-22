@@ -268,6 +268,7 @@ postprocess_ifs <- function(ifs, gc_correct = TRUE) {
 
 
 # Calculate z-scores for the IFS
+#' @export
 calc_ifs_z_score <- function(ifs) {
   assertthat::are_equal(length(unique(seqnames(ifs))), 1)
 
@@ -342,8 +343,11 @@ gc_correct <-
       logging::loginfo(str_interp("Training using LOESS mode, total n = ${length(ifs)}"))
     }
 
+    # Exclude outliers from the training dataset
+    outlier_flag <- exclude_outlier(ifs$score0, mark = TRUE)
     train_data <-
-      data.table::data.table(gc = ifs$gc, score0 = ifs$score0) %>% slice_sample(n = max_training_dataset)
+      data.table::data.table(gc = ifs$gc[!outlier_flag], score0 = ifs$score0[!outlier_flag]) %>%
+      slice_sample(n = max_training_dataset)
     model <-
       loess(
         formula = score0 ~ gc,
@@ -597,6 +601,9 @@ pcpois <- .build_pcpois()
 
 # @param mark if TRUE, return a logical vector indicating positions of outliers
 exclude_outlier <- function(x, mark = FALSE, threshold = 3.5) {
+  # TODO
+  return(x)
+
   if (length(x) < 10)
     return(x)
 
@@ -878,167 +885,50 @@ calc_pois_pval_local <-
 
 #' Call hotspots using FDR only
 #' @export
-call_hotspot_fdr <- function(ifs, fdr_cutoff = 0.2, merge_distance = 200) {
-  seqinfo <- GenomicRanges::seqinfo(ifs)
-  ifs <- bedtorch::as.bedtorch_table(ifs)
-  ifs <-
-    ifs[, .(
-      chrom,
-      start,
-      end,
-      z_score,
-      score,
-      pval,
-      pval_adjust,
-      cov,
-      score0
-    )]
+call_hotspot <- function(
+  ifs,
+  fdr_cutoff = 0.2,
+  merge_distance = 200,
+  pval_cutoff = 1e-5,
+  local_pval_cutoff = 1e-5,
+  method = c("v1", "v2")
+) {
+  method <- match.arg(method)
+  browser()
 
-  hotspot <- ifs[!is.na(pval_adjust) & pval_adjust < fdr_cutoff]
+  # Relocate column orders
+  ifs_md <- mcols(ifs) %>%
+    as_tibble() %>%
+    relocate(z_score, 1)
+  mcols(ifs) <- ifs_md
+
+  assertthat::assert_that(method %in% c("v1", "v2"))
+  if (method == "v1") {
+    hotspot_idx <-
+      with(
+        ifs,
+        !is.na(pval) &
+          pval <= pval_cutoff &
+          !is.na(pval_adjust) &
+          pval_adjust <= fdr_cutoff &
+          !is.na(pval_lcoal) & pval_local <= local_pval_cutoff
+      )
+    hotspot <- ifs[hotspot_idx]
+  } else if (method == "v2") {
+    hotspot <- ifs[!is.na(pval_adjust) & pval_adjust <= fdr_cutoff]
+  } else {
+    stop()
+  }
 
   if (nrow(hotspot) == 0) {
     # hotspot is empty
     return(NULL)
   }
 
-  hotspot <- bedtorch::as.GenomicRanges(hotspot)
-  GenomicRanges::seqinfo(hotspot,
-                         new2old = match(GenomeInfoDb::seqlevels(seqinfo),
-                                         GenomeInfoDb::seqlevels(hotspot))) <- seqinfo
-
+  mcols(hotspot) <- NULL
   bedtorch::merge_bed(
     hotspot,
-    max_dist = merge_distance,
-    operation = list(
-      z_score = list(
-        on = "z_score",
-        func = function(x) {
-          mean(x, na.rm = TRUE)
-        }
-      ),
-      score = list(
-        on = "score",
-        func = function(x) {
-          mean(x, na.rm = TRUE)
-        }
-      ),
-      pval = list(
-        on = "pval",
-        func = function(x) {
-          max(x, na.rm = TRUE)
-        }
-      ),
-      pval_adjust = list(
-        on = "pval_adjust",
-        func = function(x) {
-          max(x, na.rm = TRUE)
-        }
-      ),
-      cov = list(
-        on = "cov",
-        func = function(x) {
-          mean(x, na.rm = TRUE)
-        }
-      ),
-      score0 = list(
-        on = "score0",
-        func = function(x) {
-          mean(x, na.rm = TRUE)
-        }
-      )
-    )
+    max_dist = merge_distance
   )
 }
 
-
-#' Call hotspots based on pvalues (and merge)
-#'
-#' @param use_cpois Currently must be `FALSE`.
-#' @export
-call_hotspot <-
-  function(ifs,
-           use_cpois = FALSE,
-           fdr_cutoff = 0.01,
-           pval_cutoff = 1e-5,
-           local_pval_cutoff = 1e-5,
-           merge_distance = 200) {
-    ifs <- bedtorch::as.bedtorch_table(ifs)
-    ifs <-
-      ifs[, .(
-        chrom,
-        start,
-        end,
-        z_score,
-        score,
-        pval,
-        pval_adjust,
-        pval_local,
-        cov,
-        score0
-      )]
-
-    if (use_cpois) {
-      hotspot <-
-        ifs[pval <= pval_cutoff &
-          pval_cpois_adjust <= fdr_cutoff &
-          pval_cpois_local <= local_pval_cutoff]
-    } else {
-      hotspot <-
-        ifs[pval <= pval_cutoff &
-          pval_adjust <= fdr_cutoff &
-          pval_local <= local_pval_cutoff]
-    }
-    if (nrow(hotspot) == 0) {
-      # hotspot is empty
-      return(NULL)
-    }
-
-    bedtorch::merge_bed(
-      bedtorch::as.GenomicRanges(hotspot),
-      max_dist = merge_distance,
-      operation = list(
-        z_score = list(
-          on = "z_score",
-          func = function(x) {
-            mean(x, na.rm = TRUE)
-          }
-        ),
-        score = list(
-          on = "score",
-          func = function(x) {
-            mean(x, na.rm = TRUE)
-          }
-        ),
-        pval = list(
-          on = "pval",
-          func = function(x) {
-            max(x, na.rm = TRUE)
-          }
-        ),
-        pval_adjust = list(
-          on = "pval_adjust",
-          func = function(x) {
-            max(x, na.rm = TRUE)
-          }
-        ),
-        pval_local = list(
-          on = "pval_local",
-          func = function(x) {
-            max(x, na.rm = TRUE)
-          }
-        ),
-        cov = list(
-          on = "cov",
-          func = function(x) {
-            mean(x, na.rm = TRUE)
-          }
-        ),
-        score0 = list(
-          on = "score0",
-          func = function(x) {
-            mean(x, na.rm = TRUE)
-          }
-        )
-      )
-    )
-  }

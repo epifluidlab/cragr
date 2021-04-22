@@ -2,20 +2,17 @@
 % Please edit documentation in R/ifs.R
 \name{call_hotspot}
 \alias{call_hotspot}
-\title{Call hotspots based on pvalues (and merge)}
+\title{Call hotspots using FDR only}
 \usage{
 call_hotspot(
   ifs,
-  use_cpois = FALSE,
-  fdr_cutoff = 0.01,
+  fdr_cutoff = 0.2,
+  merge_distance = 200,
   pval_cutoff = 1e-05,
   local_pval_cutoff = 1e-05,
-  merge_distance = 200
+  method = c("v1", "v2")
 )
 }
-\arguments{
-\item{use_cpois}{Currently must be \code{FALSE}.}
-}
 \description{
-Call hotspots based on pvalues (and merge)
+Call hotspots using FDR only
 }
