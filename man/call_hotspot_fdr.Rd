@@ -4,7 +4,7 @@
 \alias{call_hotspot_fdr}
 \title{Call hotspots using FDR only}
 \usage{
-call_hotspot_fdr(ifs, fdr_cutoff = 0.2, merge_distance = 200)
+call_hotspot_fdr(ifs, fdr_cutoff = 0.2, merge_distance = 200, merge = FALSE)
 }
 \description{
 Call hotspots using FDR only

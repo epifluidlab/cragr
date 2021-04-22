@@ -878,7 +878,8 @@ calc_pois_pval_local <-
 
 #' Call hotspots using FDR only
 #' @export
-call_hotspot_fdr <- function(ifs, fdr_cutoff = 0.2, merge_distance = 200, merge = FALSE) {
+call_hotspot_fdr <- function(ifs, fdr_cutoff = 0.2, merge_distance = 200) {
+  seqinfo <- GenomicRanges::seqinfo(ifs)
   ifs <- bedtorch::as.bedtorch_table(ifs)
   ifs <-
     ifs[, .(
@@ -900,11 +901,14 @@ call_hotspot_fdr <- function(ifs, fdr_cutoff = 0.2, merge_distance = 200, merge 
     return(NULL)
   }
 
-  if (!merge)
-    return(hotspot)
+  hotspot <- bedtorch::as.GenomicRanges(hotspot)
+  GenomicRanges::seqinfo(hotspot,
+                         new2old = match(GenomeInfoDb::seqlevels(seqinfo),
+                                         GenomeInfoDb::seqlevels(hotspot))) <- seqinfo
 
   bedtorch::merge_bed(
-    bedtorch::as.GenomicRanges(hotspot),
+    hotspot,
+    max_dist = merge_distance,
     operation = list(
       z_score = list(
         on = "z_score",
@@ -991,6 +995,7 @@ call_hotspot <-
 
     bedtorch::merge_bed(
       bedtorch::as.GenomicRanges(hotspot),
+      max_dist = merge_distance,
       operation = list(
         z_score = list(
           on = "z_score",

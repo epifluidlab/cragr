@@ -99,3 +99,28 @@ log_mem <- function(label = "Unknown") {
     logging::logdebug(str_interp("[${label}] Memory used: ${mem} MB"))
   }
 }
+
+
+
+#' Compare two hotspot files and return the Jaccard index
+#'
+#' Calculate Jaccard index using merged hotspots
+#' @export
+jaccard_index <- function(hotspot1, hotspot2, max_distance = 200L) {
+  hotspot1 <- GenomicRanges::reduce(hotspot1, min.gapwidth = max_distance + 1)
+  mcols(hotspot1) <- NULL
+  hotspot2 <- GenomicRanges::reduce(hotspot2, min.gapwidth = max_distance + 1)
+  mcols(hotspot2) <- NULL
+
+  hits <- findOverlaps(hotspot1, hotspot2)
+  hotspot1_common <- unique(queryHits(hits))
+  hotspot1_unique <- setdiff(seq.int(length(hotspot1)), hotspot1_common)
+  hotspot2_common <- unique(subjectHits(hits))
+  hotspot2_unique <- setdiff(seq.int(length(hotspot2)), hotspot2_common)
+
+  assertthat::are_equal(length(hotspot1_common), length(hotspot2_common))
+
+  return(length(hotspot1_common) / (
+    length(hotspot1_unique) + length(hotspot2_unique) + length(hotspot1_common)
+  ))
+}

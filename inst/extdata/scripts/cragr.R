@@ -363,14 +363,18 @@ if (subcommand == "stage1") {
   }
 
   hotspot_standard <-
-    call_hotspot(
-      ifs,
-      use_cpois = FALSE,
-      fdr_cutoff = script_args$fdr,
-      pval_cutoff = script_args$local_pval,
-      local_pval_cutoff = script_args$local_pval,
-      merge_distance = script_args$merge_distance
-    )
+    call_hotspot_fdr(ifs,
+                     fdr_cutoff = script_args$fdr,
+                     merge_distance = script_args$merge_distance)
+  # hotspot_standard <-
+  #   call_hotspot(
+  #     ifs,
+  #     use_cpois = FALSE,
+  #     fdr_cutoff = script_args$fdr,
+  #     pval_cutoff = script_args$local_pval,
+  #     local_pval_cutoff = script_args$local_pval,
+  #     merge_distance = script_args$merge_distance
+  #   )
 
   if (is.null(hotspot_standard)) {
     logging::loginfo("Called 0 hotspots")
