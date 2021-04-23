@@ -30,9 +30,9 @@ parse_script_args <- function() {
     # Run in CLI script mode
     parser <- optparse::OptionParser(
       option_list = list(
-        optparse::make_option(c("-i", "--input"), help = "Path to the inpuut file. If there are multiple input files, they should be separated by colons"),
-        optparse::make_option(c("--output-ifs"), type = "character", help = "Directory for IFS output"),
-        optparse::make_option(c("--output-hotspot"), type = "character", help = "Directory for hotspot output"),
+        optparse::make_option(c("-i", "--input"), help = "Path to the input file. If there are multiple input files, they should be separated by colons"),
+        optparse::make_option(c("-o", "--output"), type = "character", help = "Path to output file"),
+        # optparse::make_option(c("--output-hotspot"), type = "character", help = "Directory for hotspot output"),
         optparse::make_option(c("--genome"), default = "hs37-1kg", help = "Genome of the input"),
         optparse::make_option(
           c("-g", "--gc-correct"),
@@ -98,6 +98,7 @@ parse_script_args <- function() {
           default = NULL,
           help = "During hotspot calling, two hotspots with distance smaller than this will be merged together. If not specified, the sliding window size will by used, i.e. 200bp by default"
         ),
+        optparse::make_option(c("--hotspot-method"), default = "v1"),
         optparse::make_option(c("--verbose"), default = FALSE, action = "store_true")
       )
     )
@@ -188,7 +189,7 @@ write_ifs_as_bedgraph <- function(ifs, script_args, comments) {
   # GenomicRanges::mcols(ifs) <- df
 
   bedtorch::write_bed(ifs,
-                      file_path = script_args$output_ifs,
+                      file_path = script_args$output,
                       comments = comments)
 }
 
@@ -280,7 +281,7 @@ subcommand_ifs <- function(script_args) {
     log_mem("Done calculating GC contents")
   }
 
-  bedtorch::write_bed(ifs, file_path = script_args$output_ifs)
+  bedtorch::write_bed(ifs, file_path = script_args$output)
 }
 
 
@@ -323,35 +324,47 @@ subcommand_peak <- function(script_args) {
 }
 
 subcommand_hotspot <- function(script_args) {
-  hotspot_standard <-
-    call_hotspot(
-      ifs,
-      fdr_cutoff = script_args$fdr,
-      pval_cutoff = script_args$pval,
-      local_pval_cutoff = script_args$pval,
-      method = script_args$hotspot_method,
-      merge_distance = script_args$merge_distance
-    )
-  # hotspot_standard <-
-  #   call_hotspot(
-  #     ifs,
-  #     fdr_cutoff = script_args$fdr,
-  #     pval_cutoff = script_args$local_pval,
-  #     local_pval_cutoff = script_args$local_pval,
-  #     merge_distance = script_args$merge_distance
-  #   )
+  # Determine chroms
+  chroms <- system(paste0("tabix -l ", script_args$input), intern = TRUE)
+  hotspot_list <- chroms %>%
+    map(function(chrom) {
+      # Load IFS score from input file
+      logging::loginfo(str_interp("Loading IFS scores: ${script_args$input} ..."))
+      ifs <-
+        bedtorch::read_bed(script_args$input,
+                           genome = script_args$genome,
+                           range = chrom)
+      GenomicRanges::start(ifs) <-
+        GenomicRanges::start(ifs) - (script_args$window_size - script_args$step_size) /
+        2
+      GenomicRanges::width(ifs) <- script_args$window_size
+
+      logging::loginfo("IFS summary:")
+      print(ifs)
+
+      call_hotspot(
+        ifs,
+        fdr_cutoff = script_args$fdr,
+        pval_cutoff = script_args$pval,
+        local_pval_cutoff = script_args$pval,
+        method = script_args$hotspot_method,
+        merge_distance = script_args$merge_distance
+      )
+    })
+
+  hotspot_standard <- do.call(c, args = hotspot_list)
 
   if (is.null(hotspot_standard)) {
     logging::loginfo("Called 0 hotspots")
     # Write an empty file anyway. This is useful when you want to use snakemake
     # and cragr together
-    system(str_interp("touch ${script_args$output_hotspot}"))
+    system(str_interp("touch ${script_args$output}"))
   } else {
     n_hotspot <- length(hotspot_standard)
     logging::loginfo(str_interp("Called ${n_hotspot} hotspots"))
     logging::loginfo("Writing results to disk ...")
     bedtorch::write_bed(hotspot_standard,
-                        file_path = script_args$output_hotspot,
+                        file_path = script_args$output,
                         comments = comments)
   }
 }

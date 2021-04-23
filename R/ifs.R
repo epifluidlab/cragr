@@ -602,10 +602,12 @@ pcpois <- .build_pcpois()
 # @param mark if TRUE, return a logical vector indicating positions of outliers
 exclude_outlier <- function(x, mark = FALSE, threshold = 3.5) {
   # TODO
-  return(x)
-
-  if (length(x) < 10)
-    return(x)
+  if (length(x) < 10) {
+    if (mark)
+      return(rep(FALSE, length(x)))
+    else
+      return(x)
+  }
 
   mad_x <- mad(x)
   n1 <- length(x)
@@ -660,7 +662,7 @@ calc_pois_pval <- function(ifs,
 
       gr$pval_pois <- pval_ppois(gr$score)
       gr$pval_nbinom <- pval_pnbinom(gr$score)
-      # gr$pval_adjust <- p.adjust(gr$pval, method = "BH")
+      gr$pval_pois_adjust <- p.adjust(gr$pval_pois, method = "BH")
       gr
     }) %>%
     GenomicRanges::GRangesList() %>%
@@ -894,7 +896,6 @@ call_hotspot <- function(
   method = c("v1", "v2")
 ) {
   method <- match.arg(method)
-  browser()
 
   # Relocate column orders
   ifs_md <- mcols(ifs) %>%
@@ -904,23 +905,34 @@ call_hotspot <- function(
 
   assertthat::assert_that(method %in% c("v1", "v2"))
   if (method == "v1") {
-    hotspot_idx <-
-      with(
-        ifs,
-        !is.na(pval) &
-          pval <= pval_cutoff &
-          !is.na(pval_adjust) &
-          pval_adjust <= fdr_cutoff &
-          !is.na(pval_lcoal) & pval_local <= local_pval_cutoff
-      )
-    hotspot <- ifs[hotspot_idx]
+    # All local p-values (pval_pois_5k and alike) should be filtered
+    pval_local_filter_result <-
+      ifs_md %>%
+      select(starts_with("pval_pois_")) %>%
+      select(-"pval_pois_adjust") %>%
+      mutate(id = seq.int(n())) %>%
+      mutate(flag = if_all(starts_with("pval_pois_"),
+                           ~ !is.na(.) & . <= local_pval_cutoff)) %>%
+      .$flag
+
+    other_filter_result <- with(
+      ifs_md,
+      !is.na(pval_pois) &
+        pval_pois <= pval_cutoff &
+        !is.na(pval_pois_adjust) &
+        pval_pois_adjust <= fdr_cutoff
+    )
+
+    hotspot <- ifs[pval_local_filter_result & other_filter_result]
   } else if (method == "v2") {
-    hotspot <- ifs[!is.na(pval_adjust) & pval_adjust <= fdr_cutoff]
+    hotspot_idx <-
+      with(ifs_md,!is.na(pval_adjust) & pval_adjust <= fdr_cutoff)
+    hotspot <- ifs[hotspot_idx]
   } else {
     stop()
   }
 
-  if (nrow(hotspot) == 0) {
+  if (length(hotspot) == 0) {
     # hotspot is empty
     return(NULL)
   }
