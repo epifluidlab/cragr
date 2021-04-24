@@ -29,7 +29,7 @@ Imports:
     Rcpp,
     lobstr,
     logging,
-    bedtorch (>= 0.1.11.9006)
+    bedtorch (>= 0.1.11.9007)
 Remotes: 
     haizi-zh/bedtorch
 LinkingTo: 

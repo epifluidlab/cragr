@@ -1,6 +1,6 @@
 # cragr pipeline
 
-localrules: all, merge_ifs, call_hotspot
+localrules: all, merge_ifs, call_hotspot_pois, call_hotspot_nb
 
 # >>> Configuration >>>
 FULL_CORES = config.get("FULL_CORES", 16)
@@ -163,7 +163,7 @@ rule stage_peak:
 
 rule merge_ifs:
     input: 
-        ifs=expand("temp/{{sid}}.ifs.chr{chrom}.bedGraph.gz", chrom=range(1, 23)),
+        ifs=expand("temp/{{sid}}.ifs.chr{chrom}.bedGraph.gz", chrom=range(21, 23)),
         # hotspot=expand("temp/{{sid}}.hotspot.chr{chrom}.bed.gz", chrom=range(1, 23))
     output: 
         ifs="result/{sid}.ifs.bedGraph.gz",
@@ -194,3 +194,55 @@ rule merge_ifs:
         mv {output.ifs}.tmp {output.ifs}
         mv "$output_ifs".tbi {output.ifs_idx}
         """
+
+
+rule call_hotspot_nb:
+    input: 
+        ifs="result/{sid}.ifs.bedGraph.gz",
+        ifs_idx="result/{sid}.ifs.bedGraph.gz.tbi",
+    output:
+        hotspot="result/{sid}.hotspot.nb.bed.gz",
+    log: "log/{sid}.hotspot.nb.bed.gz",
+    params:
+        label=lambda wildcards: f"cragr.hotspot_nb.{wildcards.sid}",
+        script_home=lambda wildcards: SCRIPT_HOME
+    shell:
+        """
+        tmpdir=$(mktemp -d)
+
+        Rscript {params.script_home}/cragr.R hotspot \
+        -i {input.ifs} \
+        -o "$tmpdir"/hotspot.bed.gz \
+        --fdr 0.25 \
+        --hotspot-method nb \
+        --verbose 2>&1 | tee {log}
+
+        mv "$tmpdir"/hotspot.bed.gz {output.hotspot}.tmp
+        mv {output.hotspot}.tmp {output.hotspot}
+        """    
+
+rule call_hotspot_pois:
+    input: 
+        ifs="result/{sid}.ifs.bedGraph.gz",
+        ifs_idx="result/{sid}.ifs.bedGraph.gz.tbi",
+    output:
+        hotspot="result/{sid}.hotspot.pois.bed.gz",
+    log: "log/{sid}.hotspot.pois.bed.gz",
+    params:
+        label=lambda wildcards: f"cragr.hotspot_pois.{wildcards.sid}",
+        script_home=lambda wildcards: SCRIPT_HOME
+    shell:
+        """
+        tmpdir=$(mktemp -d)
+
+        Rscript {params.script_home}/cragr.R hotspot \
+        -i {input.ifs} \
+        -o "$tmpdir"/hotspot.bed.gz \
+        --fdr 0.01 \
+        --pval 0.00001 \
+        --hotspot-method pois \
+        --verbose 2>&1 | tee {log}
+
+        mv "$tmpdir"/hotspot.bed.gz {output.hotspot}.tmp
+        mv {output.hotspot}.tmp {output.hotspot}
+        """    

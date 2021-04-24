@@ -601,7 +601,6 @@ pcpois <- .build_pcpois()
 
 # @param mark if TRUE, return a logical vector indicating positions of outliers
 exclude_outlier <- function(x, mark = FALSE, threshold = 3.5) {
-  # TODO
   if (length(x) < 10) {
     if (mark)
       return(rep(FALSE, length(x)))
@@ -893,7 +892,7 @@ call_hotspot <- function(
   merge_distance = 200,
   pval_cutoff = 1e-5,
   local_pval_cutoff = 1e-5,
-  method = c("v1", "v2")
+  method = c("pois", "nb")
 ) {
   method <- match.arg(method)
 
@@ -903,8 +902,8 @@ call_hotspot <- function(
     relocate(z_score, 1)
   mcols(ifs) <- ifs_md
 
-  assertthat::assert_that(method %in% c("v1", "v2"))
-  if (method == "v1") {
+  assertthat::assert_that(method %in% c("pois", "nb"))
+  if (method == "pois") {
     # All local p-values (pval_pois_5k and alike) should be filtered
     pval_local_filter_result <-
       ifs_md %>%
@@ -924,7 +923,7 @@ call_hotspot <- function(
     )
 
     hotspot <- ifs[pval_local_filter_result & other_filter_result]
-  } else if (method == "v2") {
+  } else if (method == "nb") {
     hotspot_idx <-
       with(ifs_md,!is.na(pval_adjust) & pval_adjust <= fdr_cutoff)
     hotspot <- ifs[hotspot_idx]

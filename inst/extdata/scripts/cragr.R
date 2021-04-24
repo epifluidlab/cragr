@@ -98,7 +98,7 @@ parse_script_args <- function() {
           default = NULL,
           help = "During hotspot calling, two hotspots with distance smaller than this will be merged together. If not specified, the sliding window size will by used, i.e. 200bp by default"
         ),
-        optparse::make_option(c("--hotspot-method"), default = "v1"),
+        optparse::make_option(c("--hotspot-method"), default = "pois"),
         optparse::make_option(c("--verbose"), default = FALSE, action = "store_true")
       )
     )
@@ -139,7 +139,7 @@ parse_script_args <- function() {
           script_args[[arg]] <<- as.numeric(script_args[[arg]])
       })
 
-    if (is_null(script_args$merge_distance))
+    if (is.null(script_args$merge_distance))
       script_args$merge_distance <- script_args$window_size
 
     if (script_args$window_size %% script_args$step_size != 0)
@@ -149,6 +149,8 @@ parse_script_args <- function() {
     if (script_args$genome != "hs37-1kg") {
       stop("Currently, only genome hs37-1kg is supported")
     }
+
+    assertthat::assert_that(script_args$hotspot_method %in% c("pois", "nb"))
 
     return(list(subcommand, script_args))
   }
@@ -232,6 +234,10 @@ log_mem <- function(label = "Unknown") {
 # 3. Calculate GC content for each fragment
 subcommand_ifs <- function(script_args) {
   logging::loginfo("Input: fragment data")
+
+  if (!requireNamespace("BSgenome.Hsapiens.1000genomes.hs37d5")) {
+    stop("Package BSgenome.Hsapiens.1000genomes.hs37d5 is requried for genome hs37-1kg")
+  }
 
   frag <- script_args$input %>% map(function(input_file) {
     logging::loginfo(str_interp("Loading fragments: ${input_file} ..."))
@@ -334,6 +340,7 @@ subcommand_hotspot <- function(script_args) {
         bedtorch::read_bed(script_args$input,
                            genome = script_args$genome,
                            range = chrom)
+      # Convert bedGraph to bed
       GenomicRanges::start(ifs) <-
         GenomicRanges::start(ifs) - (script_args$window_size - script_args$step_size) /
         2
