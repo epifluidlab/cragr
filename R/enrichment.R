@@ -1,3 +1,4 @@
+#' @export
 enrichment_analysis <- function(hotspot, feature, half_width = 1000L, flip_rev = TRUE) {
   mcols(hotspot) <- NULL
   mcols(feature) <- NULL

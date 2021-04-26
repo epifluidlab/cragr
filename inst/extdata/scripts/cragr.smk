@@ -14,6 +14,10 @@ WALL_TIME_MAX = 2880
 MEM_PER_CORE = 1800
 
 
+FDR_NB = config.get("FDR_NB", 0.25)
+FDR_POIS = config.get("FDR_POIS", 0.01)
+
+
 def stage_ifs_cores(chrom, file_path, single_chrom=False):
     import math
     import os.path
@@ -54,42 +58,6 @@ def stage_peak_cores(chrom):
         return 3
     else:
         return 2
-
-
-rule stage_ifs_chrom:
-    input:
-        frag="frag/{sid}.frag.chr{chrom}.bed.gz",
-        frag_idx="frag/{sid}.frag.chr{chrom}.bed.gz.tbi",
-        # frag="frag/{sid}.frag.bed.gz",
-        # frag_idx="frag/{sid}.frag.bed.gz.tbi",
-        mappability="data/mappability.hs37-1kg.w200.s20.0_9.bed.gz",
-        mappability_idx="data/mappability.hs37-1kg.w200.s20.0_9.bed.gz.tbi",
-    output: 
-        ifs=temp("temp/{sid}.ifs.raw.chr{chrom}.bed.gz")
-    log: "log/{sid}.chr{chrom}.stage_ifs.log"
-    params:
-        label=lambda wildcards: f"cragr.stage_ifs.{wildcards.sid}.chr{wildcards.chrom}",
-        script_home=lambda wildcards: SCRIPT_HOME
-    threads: lambda wildcards, input, attempt: int(stage_ifs_cores(wildcards.chrom, input.frag, single_chrom=True) * (0.5 + 0.5 * attempt))
-    resources:
-        mem_mb=lambda wildcards, threads: threads * MEM_PER_CORE,
-        time=WALL_TIME_MAX,
-        time_min=300,
-        attempt=lambda wildcards, threads, attempt: attempt
-    shell:
-        """
-        tmpdir=$(mktemp -d)
-
-        Rscript {params.script_home}/cragr.R ifs \
-        -i {input.frag} \
-        -o "$tmpdir"/output.bed.gz \
-        -m {input.mappability} \
-        --chrom {wildcards.chrom} \
-        --verbose 2>&1 | tee {log}
-
-        mv "$tmpdir"/output.bed.gz {output.ifs}.tmp
-        mv {output.ifs}.tmp {output.ifs}
-        """
 
 
 rule stage_ifs:
@@ -163,7 +131,7 @@ rule stage_peak:
 
 rule merge_ifs:
     input: 
-        ifs=expand("temp/{{sid}}.ifs.chr{chrom}.bedGraph.gz", chrom=range(21, 23)),
+        ifs=expand("temp/{{sid}}.ifs.chr{chrom}.bedGraph.gz", chrom=range(1, 23)),
         # hotspot=expand("temp/{{sid}}.hotspot.chr{chrom}.bed.gz", chrom=range(1, 23))
     output: 
         ifs="result/{sid}.ifs.bedGraph.gz",
@@ -196,16 +164,42 @@ rule merge_ifs:
         """
 
 
+rule ifs_bigwig:
+    input:
+        ifs="result/{sid}.ifs.bedGraph.gz",
+        ifs_idx="result/{sid}.ifs.bedGraph.gz.tbi",
+        chrom_sizes="data/human_g1k_v37.chrom.sizes",
+    output: "result/{sid}.ifs.bw"
+    shell:
+        """
+        tmpdir=$(mktemp -d)
+        echo "Writing to temporary directory: $tmpdir"
+
+        for chrom in 1 {{10..19}} 2 {{20..22}} {{3..9}}
+        do
+            echo "Extracting chr$chrom ..."
+            tabix {input.ifs} $chrom | bioawk -t '{{print $1,$2,$3,$4}}' >> $tmpdir/ifs.bed
+        done
+        echo "Converting to bigWig ..."
+        bedGraphToBigWig "$tmpdir"/ifs.bed {input.chrom_sizes} $tmpdir/ifs.bw
+        unlink "$tmpdir"/ifs.bed
+
+        mv "$tmpdir"/ifs.bw {output}.tmp
+        mv {output}.tmp {output}
+        """
+
+
 rule call_hotspot_nb:
     input: 
         ifs="result/{sid}.ifs.bedGraph.gz",
         ifs_idx="result/{sid}.ifs.bedGraph.gz.tbi",
     output:
         hotspot="result/{sid}.hotspot.nb.bed.gz",
-    log: "log/{sid}.hotspot.nb.bed.gz",
+    log: "log/{sid}.hotspot.nb.log",
     params:
         label=lambda wildcards: f"cragr.hotspot_nb.{wildcards.sid}",
-        script_home=lambda wildcards: SCRIPT_HOME
+        script_home=lambda wildcards: SCRIPT_HOME,
+        fdr_nb=lambda wildcards: FDR_NB,
     shell:
         """
         tmpdir=$(mktemp -d)
@@ -213,7 +207,7 @@ rule call_hotspot_nb:
         Rscript {params.script_home}/cragr.R hotspot \
         -i {input.ifs} \
         -o "$tmpdir"/hotspot.bed.gz \
-        --fdr 0.25 \
+        --fdr {params.fdr_nb} \
         --hotspot-method nb \
         --verbose 2>&1 | tee {log}
 
@@ -227,10 +221,11 @@ rule call_hotspot_pois:
         ifs_idx="result/{sid}.ifs.bedGraph.gz.tbi",
     output:
         hotspot="result/{sid}.hotspot.pois.bed.gz",
-    log: "log/{sid}.hotspot.pois.bed.gz",
+    log: "log/{sid}.hotspot.pois.log",
     params:
         label=lambda wildcards: f"cragr.hotspot_pois.{wildcards.sid}",
-        script_home=lambda wildcards: SCRIPT_HOME
+        script_home=lambda wildcards: SCRIPT_HOME,
+        fdr_pois=lambda wildcards: FDR_POIS,
     shell:
         """
         tmpdir=$(mktemp -d)
@@ -238,7 +233,7 @@ rule call_hotspot_pois:
         Rscript {params.script_home}/cragr.R hotspot \
         -i {input.ifs} \
         -o "$tmpdir"/hotspot.bed.gz \
-        --fdr 0.01 \
+        --fdr {params.fdr_pois} \
         --pval 0.00001 \
         --hotspot-method pois \
         --verbose 2>&1 | tee {log}
@@ -246,3 +241,57 @@ rule call_hotspot_pois:
         mv "$tmpdir"/hotspot.bed.gz {output.hotspot}.tmp
         mv {output.hotspot}.tmp {output.hotspot}
         """    
+
+
+rule call_hotspot_nb_fdr:
+    input: 
+        ifs="result/{sid}.ifs.bedGraph.gz",
+        ifs_idx="result/{sid}.ifs.bedGraph.gz.tbi",
+    output:
+        hotspot="result/{sid}.hotspot.nb.fdr{fdr}.bed.gz",
+    log: "log/{sid}.hotspot.nb.fdr{fdr}.log",
+    params:
+        label=lambda wildcards: f"cragr.hotspot_nb.{wildcards.sid}",
+        script_home=lambda wildcards: SCRIPT_HOME,
+        fdr_nb=lambda wildcards: FDR_NB,
+    shell:
+        """
+        tmpdir=$(mktemp -d)
+
+        Rscript {params.script_home}/cragr.R hotspot \
+        -i {input.ifs} \
+        -o "$tmpdir"/hotspot.bed.gz \
+        --fdr {wildcards.fdr} \
+        --hotspot-method nb \
+        --verbose 2>&1 | tee {log}
+
+        mv "$tmpdir"/hotspot.bed.gz {output.hotspot}.tmp
+        mv {output.hotspot}.tmp {output.hotspot}
+        """
+
+
+rule call_hotspot_pois_threshold:
+    input: 
+        ifs="result/{sid}.ifs.bedGraph.gz",
+        ifs_idx="result/{sid}.ifs.bedGraph.gz.tbi",
+    output:
+        hotspot="result/{sid}.hotspot.pois.pval{threshold}.bed.gz",
+    log: "log/{sid}.hotspot.pois.pval{threshold}.log",
+    params:
+        label=lambda wildcards: f"cragr.hotspot_nb.{wildcards.sid}",
+        script_home=lambda wildcards: SCRIPT_HOME,
+        fdr_nb=lambda wildcards: FDR_NB,
+    shell:
+        """
+        tmpdir=$(mktemp -d)
+
+        Rscript {params.script_home}/cragr.R hotspot \
+        -i {input.ifs} \
+        -o "$tmpdir"/hotspot.bed.gz \
+        --pval {wildcards.threshold} \
+        --hotspot-method pois \
+        --verbose 2>&1 | tee {log}
+
+        mv "$tmpdir"/hotspot.bed.gz {output.hotspot}.tmp
+        mv {output.hotspot}.tmp {output.hotspot}
+        """

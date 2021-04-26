@@ -10,7 +10,7 @@ call_hotspot(
   merge_distance = 200,
   pval_cutoff = 1e-05,
   local_pval_cutoff = 1e-05,
-  method = c("v1", "v2")
+  method = c("pois", "nb")
 )
 }
 \description{
