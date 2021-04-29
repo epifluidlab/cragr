@@ -1,6 +1,6 @@
 # cragr pipeline
 
-localrules: all, merge_ifs, call_hotspot_pois, call_hotspot_nb
+localrules: all, merge_ifs, call_hotspot_pois, call_hotspot_nb, signal_level
 
 # >>> Configuration >>>
 FULL_CORES = config.get("FULL_CORES", 16)
@@ -309,4 +309,25 @@ rule call_hotspot_pois_threshold:
 
         mv "$tmpdir"/hotspot.bed.gz {output.hotspot}.tmp
         mv {output.hotspot}.tmp {output.hotspot}
+        """
+
+
+rule signal_level:
+    input:
+        hotspot="result/{sid}.hotspot.{hotspot}.bed.gz",
+        signal="data/roadmap/{signal}.pval.signal.bedGraph.gz",
+        signal_tbi="data/roadmap/{signal}.pval.signal.bedGraph.gz.tbi",
+    output:
+        "result/{sid}.hotspot.{hotspot}.{signal}.tsv"
+    log: "log/{sid}.hotspot.{hotspot}.{signal}.log"
+    params:
+        label=lambda wildcards: f"cragr.{wildcards.sid}.{wildcards.hotspot}.{wildcards.signal}",
+        main_script=lambda wildcards: find_main_script(),
+    shell:
+        """
+        Rscript {params.main_script} signal \
+        -i {input.hotspot} \
+        --signal {input.signal} \
+        --output {output} \
+        --verbose 2>&1 | tee {log}
         """

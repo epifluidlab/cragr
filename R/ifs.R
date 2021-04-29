@@ -589,7 +589,7 @@ pcpois <- .build_pcpois()
 
 
 # @param mark if TRUE, return a logical vector indicating positions of outliers
-exclude_outlier <- function(x, mark = FALSE, threshold = 3.5) {
+exclude_outlier <- function(x, mark = FALSE, threshold = 5) {
   n1 <- sum(!is.na(x))
 
   if (n1 < 10) {
@@ -604,7 +604,11 @@ exclude_outlier <- function(x, mark = FALSE, threshold = 3.5) {
   n2 <- sum(!is.na(x) & !outlier_flag)
 
   if (n2 / n1 < 0.9) {
-    logging::logwarn(str_interp("Outlier exclusion: #${n1} -> #${n2}. Pass rate: ${n2/n1}"))
+    logging::logwarn(str_interp("Tentative outlier exclusion: #${n1} -> #${n2}. Pass rate: ${n2/n1}"))
+    if (mark)
+      return(rep(FALSE, length(x)))
+    else
+      return(x)
   }
 
   if (mark)

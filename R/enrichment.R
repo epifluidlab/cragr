@@ -1,5 +1,11 @@
 #' @export
-enrichment_analysis <- function(hotspot, feature, half_width = 1000L, flip_rev = TRUE) {
+enrichment_analysis <-
+  function(hotspot,
+           feature,
+           fix = c("center", "start", "end"),
+           half_width = 1000L,
+           flip_rev = TRUE) {
+    fix <- match.arg(fix)
   mcols(hotspot) <- NULL
   mcols(feature) <- NULL
   common_seqlevels <- intersect(seqlevels(feature), seqlevels(hotspot))
@@ -7,7 +13,13 @@ enrichment_analysis <- function(hotspot, feature, half_width = 1000L, flip_rev =
   hotspot <- keepSeqlevels(hotspot, common_seqlevels, pruning.mode = "coarse")
 
   # Expand feature from mid point
-  feature_mid_point <- as.integer(round(start(feature) + (width(feature) - 1) / 2))
+  if (fix == "center")
+    feature_mid_point <- as.integer(round(start(feature) + (width(feature) - 1) / 2))
+  else if (fix == "start")
+    feature_mid_point <- as.integer(start(feature))
+  else
+    feature_mid_point <- as.integer(end(feature))
+
   # Remove potential negative start positions
   positive_feature_span <- feature_mid_point - half_width > 0
   feature <- feature[positive_feature_span]
