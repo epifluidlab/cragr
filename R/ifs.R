@@ -241,30 +241,20 @@ ifs_score <-
   }
 
 
-#' Post-process raw IFS scores
-#'
-#' From result from `ifs_score()`:
-#' 1. Perform GC-correction
-#' 2. Calculate z-scores
-#'
-#' @param ifs Result returned by `ifs_score()`.
-#' @param gc_correct A logical value indicating whether to perform
-#'   GC-correction.
-#' @export
-postprocess_ifs <- function(ifs, gc_correct = TRUE) {
-  # Don't perform GC correctoion
-  if (gc_correct) {
-    logging::loginfo("Performing GC correction ...")
-    ifs <- gc_correct(ifs, span = 0.75)
-  }
-
-  log_mem("Done GC correction")
-
-  # Calculate z-scores
-  logging::loginfo("Calculating z-scores ...")
-  ifs <- calc_ifs_z_score(ifs)
-  ifs
-}
+# postprocess_ifs <- function(ifs, gc_correct = TRUE) {
+#   # Don't perform GC correctoion
+#   if (gc_correct) {
+#     logging::loginfo("Performing GC correction ...")
+#     ifs <- gc_correct(ifs, span = 0.75)
+#   }
+#
+#   log_mem("Done GC correction")
+#
+#   # Calculate z-scores
+#   logging::loginfo("Calculating z-scores ...")
+#   ifs <- calc_ifs_z_score(ifs)
+#   ifs
+# }
 
 
 # Calculate z-scores for the IFS
@@ -272,11 +262,10 @@ postprocess_ifs <- function(ifs, gc_correct = TRUE) {
 calc_ifs_z_score <- function(ifs) {
   assertthat::are_equal(length(unique(seqnames(ifs))), 1)
 
-  mad_factor <- 1.28
-
-  score_median <- median(ifs$score)
-  score_mad <- mad(ifs$score, constant = mad_factor)
-  ifs$z_score <- (ifs$score - score_median) / score_mad
+  score <- exclude_outlier(ifs$score)
+  score_mean <- mean(score)
+  score_sd <- sd(score)
+  ifs$z_score <- (ifs$score - score_mean) / score_sd
 
   ifs
 }
@@ -601,25 +590,27 @@ pcpois <- .build_pcpois()
 
 # @param mark if TRUE, return a logical vector indicating positions of outliers
 exclude_outlier <- function(x, mark = FALSE, threshold = 3.5) {
-  if (length(x) < 10) {
+  n1 <- sum(!is.na(x))
+
+  if (n1 < 10) {
     if (mark)
       return(rep(FALSE, length(x)))
     else
       return(x)
   }
 
-  mad_x <- mad(x)
-  n1 <- length(x)
+  mad_x <- mad(x, na.rm = TRUE)
+  outlier_flag <- !is.na(x) & (abs(x - median(x, na.rm = TRUE)) >= threshold * mad_x)
+  n2 <- sum(!is.na(x) & !outlier_flag)
 
-  if (mark)
-    return(abs(x - median(x)) >= threshold * mad_x)
-
-  x <- x[abs(x - median(x)) < threshold * mad_x]
-  n2 <- length(x)
   if (n2 / n1 < 0.9) {
     logging::logwarn(str_interp("Outlier exclusion: #${n1} -> #${n2}. Pass rate: ${n2/n1}"))
   }
-  x
+
+  if (mark)
+    return(outlier_flag)
+  else
+    return(x[!outlier_flag])
 }
 
 
@@ -811,11 +802,13 @@ calc_pois_pval_local <-
 
               results <- list()
 
+              # Local pois p-values
               v <- rep(NA, length(score_rollmean))
               v[valid_roll_idx] <- ppois(score[valid_roll_idx],
                                          lambda = score_rollmean[valid_roll_idx])
               results[[paste0("pval_pois_", local_suffix)]] <- v
 
+              # Local NB p-values
               v <- rep(NA, length(score_rollmean))
               nbinom_mu <- score_rollmean[valid_roll_idx]
               nbinom_var <- score_rollvar[valid_roll_idx]
@@ -832,8 +825,8 @@ calc_pois_pval_local <-
 
               results[[paste0("pval_nbinom_", local_suffix)]] <- v
 
-              results[[paste0("mu_", local_suffix)]] <- score_rollmean
-              results[[paste0("var_", local_suffix)]] <- score_rollvar
+              # results[[paste0("mu_", local_suffix)]] <- score_rollmean
+              # results[[paste0("var_", local_suffix)]] <- score_rollvar
 
               results
             })
@@ -865,13 +858,20 @@ calc_pois_pval_local <-
 
     ifs <- ifs[local_peaks]
 
-    # Aggregate all kind of p-values and take the maximum
-    pval_cols <- c("pval_nbinom", paste0("pval_nbinom_", names(local_layout)))
+    ifs[, is_outlier := NULL]
 
-    ifs[, `:=`(is_outlier = NULL,
-               pval = do.call(pmax, args = pval_cols %>% map(function(x) ifs[[x]])))]
+    # Aggregate all local pois p-values by taking the maximum
+    # Example: pval_pois_5k, pval_pois_10k, ...
+    pval_pois_local_cols <- paste0("pval_pois_", names(local_layout))
+    ifs[, pval_pois_local := do.call(pmax, args = ifs[, ..pval_pois_local_cols])]
+    ifs[, (pval_pois_local_cols) := NULL]
+
+    # Aggregate all NB p-values by taking the maximum
+    # Example: pval_nbinom, pval_nbinom_5k, pval_nbinom_10k, ...
+    pval_nb_cols <- c("pval_nbinom", paste0("pval_nbinom_", names(local_layout)))
+    ifs[, pval := do.call(pmax, args = ifs[, ..pval_nb_cols])]
     ifs[, pval_adjust := p.adjust(pval, method = "BH")]
-
+    ifs[, (pval_nb_cols) := NULL]
 
     ifs <- bedtorch::as.GenomicRanges(ifs)
 
@@ -889,7 +889,6 @@ calc_pois_pval_local <-
 call_hotspot <- function(
   ifs,
   fdr_cutoff = 0.2,
-  merge_distance = 200,
   pval_cutoff = 1e-5,
   local_pval_cutoff = 1e-5,
   method = c("pois", "nb")
@@ -937,9 +936,6 @@ call_hotspot <- function(
   }
 
   mcols(hotspot) <- NULL
-  bedtorch::merge_bed(
-    hotspot,
-    max_dist = merge_distance
-  )
+  hotspot
 }
 

@@ -91,13 +91,6 @@ parse_script_args <- function() {
         # ),
         optparse::make_option(c("--fdr"), default = 0.2, help = "FDR cut-off value used in hotspot calling. Default is 0.2"),
         optparse::make_option(c("--pval"), default = 1e-5, help = "Threshold for p-values to call hotspots. Default is 1e-5"),
-        optparse::make_option(
-          c("--merge-distance"),
-          action = "store",
-          type = "integer",
-          default = NULL,
-          help = "During hotspot calling, two hotspots with distance smaller than this will be merged together. If not specified, the sliding window size will by used, i.e. 200bp by default"
-        ),
         optparse::make_option(c("--hotspot-method"), default = "pois"),
         optparse::make_option(c("--verbose"), default = FALSE, action = "store_true")
       )
@@ -138,9 +131,6 @@ parse_script_args <- function() {
         if (!is_null(script_args))
           script_args[[arg]] <<- as.numeric(script_args[[arg]])
       })
-
-    if (is.null(script_args$merge_distance))
-      script_args$merge_distance <- script_args$window_size
 
     if (script_args$window_size %% script_args$step_size != 0)
       stop("window_size must be multiples of step_size")
@@ -224,7 +214,6 @@ log_mem <- function(label = "Unknown") {
 #   cpois = FALSE,
 #   fdr = 0.01,
 #   local_pval = 1e-5,
-#   merge_distance = 200L,
 #   verbose = TRUE
 # )
 
@@ -354,8 +343,7 @@ subcommand_hotspot <- function(script_args) {
         fdr_cutoff = script_args$fdr,
         pval_cutoff = script_args$pval,
         local_pval_cutoff = script_args$pval,
-        method = script_args$hotspot_method,
-        merge_distance = script_args$merge_distance
+        method = script_args$hotspot_method
       )
     })
 
