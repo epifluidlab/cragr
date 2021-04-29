@@ -935,7 +935,7 @@ call_hotspot <- function(
     return(NULL)
   }
 
-  mcols(hotspot) <- NULL
+  # mcols(hotspot) <- NULL
   hotspot
 }
 
