@@ -24,8 +24,8 @@ parse_script_args <- function() {
     subcommand <- args[1]
     args <- args[-1]
 
-    if (!subcommand %in% c("ifs", "peak", "hotspot"))
-      stop("Subcommand should be one of the following: stage1, stage2")
+    if (!subcommand %in% c("ifs", "peak", "hotspot", "signal"))
+      stop("Subcommand should be one of the following: ifs, peak, hotspot, signal")
 
     # Run in CLI script mode
     parser <- optparse::OptionParser(
@@ -89,9 +89,12 @@ parse_script_args <- function() {
         #   default = FALSE,
         #   help = "Use continuous Poisson model to call hotspots"
         # ),
+        optparse::make_option(c("--merge-distance"), default = 200L),
         optparse::make_option(c("--fdr"), default = 0.2, help = "FDR cut-off value used in hotspot calling. Default is 0.2"),
         optparse::make_option(c("--pval"), default = 1e-5, help = "Threshold for p-values to call hotspots. Default is 1e-5"),
         optparse::make_option(c("--hotspot-method"), default = "pois"),
+        optparse::make_option(c("--signal"), help = "The signal BED file"),
+        optparse::make_option(c("--signal-hw"), default = 1000L),
         optparse::make_option(c("--verbose"), default = FALSE, action = "store_true")
       )
     )
@@ -240,7 +243,7 @@ subcommand_ifs <- function(script_args) {
     } else {
       frag <- read_fragments(input_file, genome = script_args$genome)
       if (!is_null(script_args$exclude_chrom)) {
-        frag <- frag[!seqnames(frag) %in% script_args$exclude_chrom]
+        frag <- frag[!GenomicRanges::seqnames(frag) %in% script_args$exclude_chrom]
       }
     }
 
@@ -364,6 +367,36 @@ subcommand_hotspot <- function(script_args) {
   }
 }
 
+
+# Perform signal-level analysis
+subcommand_signal <- function(script_args) {
+  hotspot <- bedtorch::read_bed(script_args$input) %>%
+    bedtorch::merge_bed(max_dist = script_args$merge_distance)
+
+  logging::loginfo("Loading signal file ...")
+  signal <- unique(GenomicRanges::seqnames(hotspot)) %>%
+    map(function(chrom) {
+      ## Increase hotspot
+      hotspot <- hotspot[GenomicRanges::seqnames(hotspot) == chrom]
+      hotspot_start <- pmax(GenomicRanges::start(hotspot) - script_args$signal_hw, 1)
+      hotspot_end <- GenomicRanges::end(hotspot) + script_args$signal_hw
+      GenomicRanges::ranges(hotspot) <-
+        IRanges::IRanges(start = hotspot_start, end = hotspot_end)
+
+      signal <- bedtorch::read_bed(script_args$signal, range = chrom)
+      GenomeInfoDb::seqlevels(signal) <- GenomeInfoDb::seqlevels(hotspot)
+      hits <- GenomicRanges::findOverlaps(signal, hotspot)
+      signal[unique(S4Vectors::queryHits(hits))]
+    }) %>%
+    do.call(c, args = .)
+
+  logging::loginfo("Calculating signal profile over hotspots ...")
+  result <- signal_level_analysis(hotspot = hotspot, signal = signal, half_width = script_args$signal_hw)
+
+  logging::loginfo("Writing results to disk ...")
+  readr::write_tsv(result, file = script_args$output)
+}
+
 # Main ----
 parse_script_args_result <- parse_script_args()
 subcommand <- parse_script_args_result[[1]]
@@ -400,4 +433,8 @@ if (subcommand == "ifs") {
   subcommand_peak(script_args)
 } else if (subcommand == "hotspot") {
   subcommand_hotspot(script_args)
+} else if (subcommand == "signal") {
+  subcommand_signal(script_args)
+} else {
+  stop("Invalid subcommand")
 }

@@ -57,15 +57,36 @@ enrichment_analysis <- function(hotspot, feature, half_width = 1000L, flip_rev =
     freq = countOverlaps(scaffold, matched_gr) / length(matched_gr)
   )
 }
-#
-# enrichment_tts <- enrichment_analysis(hotspot = hotspot, feature = tts)
-# enrichment_tts %>% ggplot(aes(x=offset,y=count))+geom_line()
-#
-# tss <- bedtorch::read_bed("enrichment/Homo_sapiens.b37.75.TSS.commonChr.sort.bed")
-# enrichment_tss <- enrichment_analysis(hotspot = hotspot, feature = tss)
-# enrichment_tss %>% ggplot(aes(x=offset,y=count))+geom_line()
-#
-# hotspot <- bedtorch::read_bed("sandbox/EE86217.hotspot.bed.gz", genome = "hs37-1kg")
 
 
+#' @export
+signal_level_analysis <- function(hotspot, signal, half_width = 1000L) {
+  mcols(hotspot) <- NULL
+  common_seqlevels <- intersect(seqlevels(signal), seqlevels(hotspot))
+  signal <- keepSeqlevels(signal, common_seqlevels, pruning.mode = "coarse")
+  hotspot <- keepSeqlevels(hotspot, common_seqlevels, pruning.mode = "coarse")
+
+  hotspot <- GenomicRanges::resize(hotspot, width = 2 * half_width + 1, fix = "center")
+  hits <- GenomicRanges::findOverlaps(signal, hotspot)
+
+  matched_gr <- signal[queryHits(hits)]
+  matched_gr$origin <- start(hotspot[subjectHits(hits)]) + half_width
+  offset <- 1e6L
+  ranges(matched_gr) <-
+    IRanges::IRanges(
+      start = start(matched_gr) - matched_gr$origin + offset,
+      width = width(matched_gr)
+    )
+
+  seq(offset - half_width, offset + half_width) %>%
+    map_dfr(function(x) {
+      gr <- matched_gr[start(matched_gr) <= x & end(matched_gr) >= x]
+      if (length(gr) > 0)
+        value <- mean(gr$score)
+      else
+        value <- NA
+
+      tibble(offset = x - offset, value = value)
+    })
+}
 
