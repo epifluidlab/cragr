@@ -1,5 +1,11 @@
 .Rproj.user
 .Rhistory
+.Rprofile
 renv
 renv.lock
 sandbox
+
+data
+results
+pit
+lab_journal
