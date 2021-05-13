@@ -703,9 +703,8 @@ calc_pois_pval_local <-
     local_peaks <-
       ifs_expanded[,
         {
-          # Exclude these outliers in the following analysis
-          outlier_idx <- exclude_outlier(score, mark = TRUE)
-
+          # Because we just expanded the IFS data table, some rows will contain
+          # NA scores
           valid_score_idx <- !is.na(score)
 
           # Used for var calculation
@@ -713,8 +712,8 @@ calc_pois_pval_local <-
 
           results <-
             names(local_layout) %>% map(function(local_suffix) {
-          # results <-
-            # local_layout %>% map(function(local_width) {
+              # local_suffix: for example: _5k
+              # local_width: 5000L, or 10000L, for example
               local_width <- local_layout[[local_suffix]]
 
               # Outer rim: center -       outer_shift -> center -> center      +       outer_shift
@@ -728,44 +727,44 @@ calc_pois_pval_local <-
               # Local means over the 5k/10k region
               outer_sum <- bedtorch::rollsum(
                 ifelse(is_outlier, NA, score),
-                k = 2 * outer_shift,# + 1,
+                k = 2 * outer_shift + 1,
                 na_pad = TRUE,
                 align = "center",
                 na.rm = TRUE
               )
               inner_sum <- bedtorch::rollsum(
                 ifelse(is_outlier, NA, score),
-                k = 2 * inner_shift,# + 1,
+                k = 2 * inner_shift + 1,
                 na_pad = TRUE,
                 align = "center",
                 na.rm = TRUE
               )
               outer_sum_sq <- bedtorch::rollsum(
                 ifelse(is_outlier, NA, score_sq),
-                k = 2 * outer_shift,# + 1,
+                k = 2 * outer_shift + 1,
                 na_pad = TRUE,
                 align = "center",
                 na.rm = TRUE
               )
               inner_sum_sq <- bedtorch::rollsum(
                 ifelse(is_outlier, NA, score_sq),
-                k = 2 * inner_shift,# + 1,
+                k = 2 * inner_shift + 1,
                 na_pad = TRUE,
                 align = "center",
                 na.rm = TRUE
               )
 
-
               # How many valid 200-bp windows in the 5k/10 rolling region?
+              # Valid: sore is non-NA, is_outlier is FALSE
               outer_count <- bedtorch::rollsum(
                 as.integer(!is.na(score) & !is.na(is_outlier) & !is_outlier),
-                k = 2 * outer_shift,# + 1,
+                k = 2 * outer_shift + 1,
                 na_pad = TRUE,
                 align = "center"
               )
               inner_count <- bedtorch::rollsum(
                 as.integer(!is.na(score) & !is.na(is_outlier) & !is_outlier),
-                k = 2 * inner_shift,# + 1,
+                k = 2 * inner_shift + 1,
                 na_pad = TRUE,
                 align = "center"
               )
@@ -829,7 +828,7 @@ calc_pois_pval_local <-
 
               results[[paste0("pval_nbinom_", local_suffix)]] <- v
 
-              # results[[paste0("mu_", local_suffix)]] <- score_rollmean
+              results[[paste0("mu_", local_suffix)]] <- score_rollmean
               # results[[paste0("var_", local_suffix)]] <- score_rollvar
 
               results
@@ -872,10 +871,15 @@ calc_pois_pval_local <-
 
     # Aggregate all NB p-values by taking the maximum
     # Example: pval_nbinom, pval_nbinom_5k, pval_nbinom_10k, ...
-    pval_nb_cols <- c("pval_nbinom", paste0("pval_nbinom_", names(local_layout)))
+    # pval_nb_cols <- c("pval_nbinom", paste0("pval_nbinom_", names(local_layout)))
+
+    # Here we only use local background p-values to calculate the results
+    pval_nb_cols <- paste0("pval_nbinom_", names(local_layout))
     ifs[, pval := do.call(pmax, args = ifs[, ..pval_nb_cols])]
     ifs[, pval_adjust := p.adjust(pval, method = "BH")]
     ifs[, (pval_nb_cols) := NULL]
+    # Remote global background p-values
+    ifs[, pval_nbinom := NULL]
 
     ifs <- bedtorch::as.GenomicRanges(ifs)
 
@@ -886,7 +890,6 @@ calc_pois_pval_local <-
 
     ifs
   }
-
 
 #' Call hotspots using FDR only
 #' @export
