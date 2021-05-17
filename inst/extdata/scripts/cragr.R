@@ -311,7 +311,7 @@ subcommand_peak <- function(script_args) {
       ifs,
       window_size = script_args$window_size,
       step_size = script_args$step_size,
-      local_layout = list(`5k` = 5e3L, `10k` = 10e3L, `15k` = 15e3L)
+      local_layout = list(`10k` = 10e3L, `50k` = 50e3L)
     )
   log_mem("Done calculating local p-values")
 
