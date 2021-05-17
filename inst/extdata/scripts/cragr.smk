@@ -15,6 +15,7 @@ MEM_PER_CORE = 1800
 
 FDR_NB = config.get("FDR_NB", 0.25)
 FDR_POIS = config.get("FDR_POIS", 0.01)
+GC_CORRECT = config.get("GC_CORRECT", "TRUE")
 
 
 def find_main_script():
@@ -49,7 +50,7 @@ def stage_ifs_cores(chrom, file_path, single_chrom=False):
     chrom_factor = 8 - 0.286 * (chrom_idx - 1)
 
     file_size = os.path.getsize(file_path) / pow(1024, 3)
-    
+
     if single_chrom:
         file_size = file_size * (300 / (23 - 0.8 * chrom_idx))
 
@@ -83,12 +84,13 @@ rule stage_ifs:
         frag_idx="frag/{sid}.frag.bed.gz.tbi",
         mappability="data/mappability.hs37-1kg.w200.s20.0_9.bed.gz",
         mappability_idx="data/mappability.hs37-1kg.w200.s20.0_9.bed.gz.tbi",
-    output: 
+    output:
         ifs=temp("temp/{sid}.ifs.raw.chr{chrom}.bed.gz")
     log: "log/{sid}.chr{chrom}.stage_ifs.log"
     params:
         label=lambda wildcards: f"cragr.stage_ifs.{wildcards.sid}.chr{wildcards.chrom}",
-        main_script=lambda wildcards: find_main_script()
+        main_script=lambda wildcards: find_main_script(),
+        gc_correct=lambda wildcards: GC_CORRECT
     threads: lambda wildcards, input, attempt: int(stage_ifs_cores(wildcards.chrom, input.frag) * (0.5 + 0.5 * attempt))
     resources:
         mem_mb=lambda wildcards, threads: threads * MEM_PER_CORE,
@@ -102,6 +104,7 @@ rule stage_ifs:
         Rscript {params.main_script} ifs \
         -i {input.frag} \
         -o "$tmpdir"/output.bed.gz \
+        --gc-correct {params.gc_correct} \
         -m {input.mappability} \
         --chrom {wildcards.chrom} \
         --verbose 2>&1 | tee {log}
@@ -112,16 +115,17 @@ rule stage_ifs:
 
 
 rule stage_peak:
-    input: 
+    input:
         ifs="temp/{sid}.ifs.raw.chr{chrom}.bed.gz",
         mappability="data/mappability.hs37-1kg.w200.s20.0_9.bed.gz",
-    output: 
+    output:
         ifs=temp("temp/{sid}.ifs.chr{chrom}.bedGraph.gz"),
         # hotspot="temp/{sid}.hotspot.chr{chrom}.bed.gz",
     log: "log/{sid}.chr{chrom}.stage_peak.log"
     params:
         label=lambda wildcards: f"cragr.stage_peak.{wildcards.sid}.chr{wildcards.chrom}",
-        main_script=lambda wildcards: find_main_script()
+        main_script=lambda wildcards: find_main_script(),
+        gc_correct=lambda wildcards: GC_CORRECT
     threads: lambda wildcards, input, attempt: int(stage_peak_cores(wildcards.chrom) * (0.5 + 0.5 * attempt))
     resources:
         mem_mb=lambda wildcards, threads: threads * MEM_PER_CORE,
@@ -135,6 +139,7 @@ rule stage_peak:
         Rscript {params.main_script} peak \
         -i {input.ifs} \
         -o "$tmpdir"/ifs.bedGraph.gz \
+        --gc-correct {params.gc_correct} \
         -m {input.mappability} \
         --chrom {wildcards.chrom} \
         --verbose 2>&1 | tee {log}
@@ -145,10 +150,10 @@ rule stage_peak:
 
 
 rule merge_ifs:
-    input: 
+    input:
         ifs=expand("temp/{{sid}}.ifs.chr{chrom}.bedGraph.gz", chrom=range(1, 23)),
         # hotspot=expand("temp/{{sid}}.hotspot.chr{chrom}.bed.gz", chrom=range(1, 23))
-    output: 
+    output:
         ifs="result/{sid}.ifs.bedGraph.gz",
         ifs_idx="result/{sid}.ifs.bedGraph.gz.tbi",
         # hotspot="result/{sid}.hotspot.bed.gz",
@@ -179,6 +184,7 @@ rule merge_ifs:
         """
 
 
+# Convert IFS bedGraph files to bigWig files
 rule ifs_bigwig:
     input:
         ifs="result/{sid}.ifs.bedGraph.gz",
@@ -205,7 +211,7 @@ rule ifs_bigwig:
 
 
 rule call_hotspot_nb:
-    input: 
+    input:
         ifs="result/{sid}.ifs.bedGraph.gz",
         ifs_idx="result/{sid}.ifs.bedGraph.gz.tbi",
     output:
@@ -228,10 +234,10 @@ rule call_hotspot_nb:
 
         mv "$tmpdir"/hotspot.bed.gz {output.hotspot}.tmp
         mv {output.hotspot}.tmp {output.hotspot}
-        """    
+        """
 
 rule call_hotspot_pois:
-    input: 
+    input:
         ifs="result/{sid}.ifs.bedGraph.gz",
         ifs_idx="result/{sid}.ifs.bedGraph.gz.tbi",
     output:
@@ -255,11 +261,11 @@ rule call_hotspot_pois:
 
         mv "$tmpdir"/hotspot.bed.gz {output.hotspot}.tmp
         mv {output.hotspot}.tmp {output.hotspot}
-        """    
+        """
 
 
 rule call_hotspot_nb_fdr:
-    input: 
+    input:
         ifs="result/{sid}.ifs.bedGraph.gz",
         ifs_idx="result/{sid}.ifs.bedGraph.gz.tbi",
     output:
@@ -286,7 +292,7 @@ rule call_hotspot_nb_fdr:
 
 
 rule call_hotspot_pois_threshold:
-    input: 
+    input:
         ifs="result/{sid}.ifs.bedGraph.gz",
         ifs_idx="result/{sid}.ifs.bedGraph.gz.tbi",
     output:

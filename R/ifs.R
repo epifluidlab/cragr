@@ -654,9 +654,12 @@ calc_pois_pval <- function(ifs,
       if (length(gr) == 0)
         return(gr)
 
+      # Poisson-based global p-values
       gr$pval_pois <- pval_ppois(gr$score)
-      gr$pval_nbinom <- pval_pnbinom(gr$score)
+      # Poisson-based global p-values with FDR correction
       gr$pval_pois_adjust <- p.adjust(gr$pval_pois, method = "BH")
+      # NB-based global p-values
+      gr$pval_nbinom <- pval_pnbinom(gr$score)
       gr
     }) %>%
     GenomicRanges::GRangesList() %>%
@@ -877,9 +880,9 @@ calc_pois_pval_local <-
     pval_nb_cols <- paste0("pval_nbinom_", names(local_layout))
     ifs[, pval := do.call(pmax, args = ifs[, ..pval_nb_cols])]
     ifs[, pval_adjust := p.adjust(pval, method = "BH")]
-    ifs[, (pval_nb_cols) := NULL]
-    # Remote global background p-values
-    ifs[, pval_nbinom := NULL]
+    # ifs[, (pval_nb_cols) := NULL]
+    # # Remove global background p-values
+    # ifs[, pval_nbinom := NULL]
 
     ifs <- bedtorch::as.GenomicRanges(ifs)
 
