@@ -4,6 +4,25 @@ stop_quietly <- function() {
   stop()
 }
 
+# Example
+# subcommand <- "ifs"
+# script_args <- list(
+#   input = "frag/nature_bile.frag.bed.gz",
+#   output = "output.bed.gz",
+#   gc_correct = TRUE,
+#   genome = "hs37-1kg",
+#   high_mappability = "data/mappability.hs37-1kg.w200.s20.0_9.bed.gz",
+#   chrom = "21",
+#   excluded_chrom = NULL,
+#   min_mapq = 30L,
+#   min_fraglen = 50L,
+#   max_fraglen = 1000L,
+#   exclude_region = "encode.blacklist.hs37-1kg",
+#   exclude_soft_clipping = FALSE,
+#   window_size = 200L,
+#   step_size = 20L
+# )
+
 
 parse_script_args <- function() {
   if (interactive()) {

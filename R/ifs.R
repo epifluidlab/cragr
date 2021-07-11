@@ -17,7 +17,7 @@ preprocess_fragment <-
 
     # Apply filters
     logging::loginfo("Applying MAPQ filter ...")
-    if (min_mapq > 0) {
+    if (min_mapq > 0 && "mapq" %in% colnames(mcols(fragment_data))) {
       fragment_data <- fragment_data[fragment_data$mapq >= min_mapq]
     }
     logging::loginfo(str_interp("${length(fragment_data)} fragments have passed filter"))
@@ -105,8 +105,7 @@ calculate_raw_ifs <-
       ),
       by = window_id
     ][, window_id := NULL]
-    ifs %<>%
-      bedtorch::as.bedtorch_table(genome = attr(fragment_data, "genome"))
+    ifs %<>% bedtorch::as.bedtorch_table()
     data.table::setkeyv(ifs, c("chrom", "start", "end"))
 
     # Perform rolling sum over the sliding windows, therefore we have results
