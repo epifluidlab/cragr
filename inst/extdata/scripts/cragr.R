@@ -306,7 +306,11 @@ subcommand_peak <- function(script_args) {
   # Load IFS score from input file
   logging::loginfo(str_interp("Loading raw IFS scores: ${script_args$input} ..."))
   ifs <-
-    bedtorch::read_bed(script_args$input, genome = script_args$genome)
+    bedtorch::read_bed(
+      script_args$input,
+      genome = script_args$genome,
+      col.names = c("chrom", "start", "end", "score", "cov", "gc")
+    )
 
   logging::loginfo("Raw IFS summary:")
   print(ifs)
@@ -330,7 +334,7 @@ subcommand_peak <- function(script_args) {
       ifs,
       window_size = script_args$window_size,
       step_size = script_args$step_size,
-      local_layout = list(`5k` = 5e3L, `10k` = 10e3L, `25k` = 25e3L, `50k` = 50e3L)
+      local_layout = list(`50k` = 50e3L) #list(`5k` = 5e3L, `10k` = 10e3L, `25k` = 25e3L, `50k` = 50e3L)
     )
   log_mem("Done calculating local p-values")
 
@@ -424,9 +428,9 @@ rm(parse_script_args_result)
 
 # Build comment lines
 comments <- c(
-  paste0("cragr version: ", as.character(packageVersion("cragr"))),
-  paste0("bedtorch version: ", as.character(packageVersion("bedtorch"))),
-  paste0("timestamp: ", lubridate::now() %>% format("%Y-%m-%dT%H:%M:%S%z")),
+  paste0("cragr_version=", as.character(packageVersion("cragr"))),
+  paste0("bedtorch_version=", as.character(packageVersion("bedtorch"))),
+  paste0("timestamp=", lubridate::now() %>% format("%Y-%m-%dT%H:%M:%S%z")),
   # All items in script_args
   names(script_args) %>% purrr::map_chr(function(name) {
     v <- script_args[[name]]

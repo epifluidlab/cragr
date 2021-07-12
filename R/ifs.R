@@ -374,6 +374,7 @@ gc_correct <-
 # Raw IFS scores are calculated for each `step_size` bin. This function
 # performs a sliding window with the width of `window_size`. Each window
 # contains a whole number of `step_size` bins.
+# The result is a collection of overlapping `window_size` bins.
 # @param window_size Width of the sliding window. Must be multiples of `step_size`.
 # @param step_size Incremental steps of the sliding window.
 slide_window <- function(ifs, window_size, step_size) {
@@ -875,10 +876,10 @@ calc_pois_pval_local <-
     
     # Aggregate all NB p-values by taking the maximum
     # Example: pval_nbinom, pval_nbinom_5k, pval_nbinom_10k, ...
-    # pval_nb_cols <- c("pval_nbinom", paste0("pval_nbinom_", names(local_layout)))
+    pval_nb_cols <- c("pval_nbinom", paste0("pval_nbinom_", names(local_layout)))
     
     # Here we only use local background p-values to calculate the results
-    pval_nb_cols <- paste0("pval_nbinom_", names(local_layout))
+    # pval_nb_cols <- paste0("pval_nbinom_", names(local_layout))
     v <- do.call(pmax, args = ifs[, ..pval_nb_cols])
     ifs[, pval := v]
     ifs[, pval_adjust := p.adjust(pval, method = "BH")]
