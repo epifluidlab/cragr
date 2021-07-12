@@ -426,6 +426,7 @@ rm(parse_script_args_result)
 comments <- c(
   paste0("cragr version: ", as.character(packageVersion("cragr"))),
   paste0("bedtorch version: ", as.character(packageVersion("bedtorch"))),
+  paste0("timestamp: ", lubridate::now() %>% format("%Y-%m-%dT%H:%M:%S%z")),
   # All items in script_args
   names(script_args) %>% purrr::map_chr(function(name) {
     v <- script_args[[name]]

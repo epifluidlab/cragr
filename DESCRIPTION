@@ -1,6 +1,6 @@
 Package: cragr
 Title: R package for CRAG
-Version: 0.1.7.9010
+Version: 0.1.7.9011
 Authors@R: 
     person(given = "Haizi",
            family = "Zheng",
@@ -29,7 +29,7 @@ Imports:
     Rcpp,
     lobstr,
     logging,
-    bedtorch (>= 0.1.11.9012)
+    bedtorch (>= 0.1.11.9013)
 Remotes: 
     haizi-zh/bedtorch
 LinkingTo: 
