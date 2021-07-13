@@ -43,7 +43,7 @@ parse_script_args <- function() {
     subcommand <- args[1]
     args <- args[-1]
 
-    if (!subcommand %in% c("ifs", "peak", "hotspot", "signal"))
+    if (!subcommand %in% c("ifs", "peak", "signal"))
       stop("Subcommand should be one of the following: ifs, peak, hotspot, signal")
 
     # Run in CLI script mode
@@ -51,7 +51,6 @@ parse_script_args <- function() {
       option_list = list(
         optparse::make_option(c("-i", "--input"), help = "Path to the input file. If there are multiple input files, they should be separated by colons"),
         optparse::make_option(c("-o", "--output"), type = "character", help = "Path to output file"),
-        # optparse::make_option(c("--output-hotspot"), type = "character", help = "Directory for hotspot output"),
         optparse::make_option(c("--genome"), default = "hs37-1kg", help = "Genome of the input"),
         optparse::make_option(
           c("-g", "--gc-correct"),
@@ -108,10 +107,10 @@ parse_script_args <- function() {
         #   default = FALSE,
         #   help = "Use continuous Poisson model to call hotspots"
         # ),
-        optparse::make_option(c("--merge-distance"), default = 200L),
-        optparse::make_option(c("--fdr"), default = 0.2, help = "FDR cut-off value used in hotspot calling. Default is 0.2"),
-        optparse::make_option(c("--pval"), default = 1e-5, help = "Threshold for p-values to call hotspots. Default is 1e-5"),
-        optparse::make_option(c("--hotspot-method"), default = "pois"),
+        # optparse::make_option(c("--merge-distance"), default = 200L),
+        # optparse::make_option(c("--fdr"), default = 0.2, help = "FDR cut-off value used in hotspot calling. Default is 0.2"),
+        # optparse::make_option(c("--pval"), default = 1e-5, help = "Threshold for p-values to call hotspots. Default is 1e-5"),
+        # optparse::make_option(c("--hotspot-method"), default = "pois"),
         optparse::make_option(c("--signal"), help = "The signal BED file"),
         optparse::make_option(c("--signal-hw"), default = 1000L),
         optparse::make_option(c("--verbose"), default = FALSE, action = "store_true")
@@ -162,7 +161,7 @@ parse_script_args <- function() {
       stop("Currently, only genome hs37-1kg is supported")
     }
 
-    assertthat::assert_that(script_args$hotspot_method %in% c("pois", "nb"))
+    # assertthat::assert_that(script_args$hotspot_method %in% c("pois", "nb"))
 
     return(list(subcommand, script_args))
   }
@@ -319,6 +318,8 @@ subcommand_peak <- function(script_args) {
     logging::loginfo("Performing GC correction ...")
     ifs <- gc_correct(ifs, span = 0.75)
     log_mem("Done GC correction")
+  } else {
+    ifs$score0 <- NA
   }
 
   logging::loginfo("Calculating z-scores ...")
@@ -344,57 +345,57 @@ subcommand_peak <- function(script_args) {
   write_ifs_as_bedgraph(ifs, script_args, comments)
 }
 
-subcommand_hotspot <- function(script_args) {
-  # Determine chroms
-  chroms <- system(paste0("tabix -l ", script_args$input), intern = TRUE)
-  hotspot_list <- chroms %>%
-    map(function(chrom) {
-      # Load IFS score from input file
-      logging::loginfo(str_interp("Loading IFS scores: ${script_args$input} ..."))
-      ifs <-
-        bedtorch::read_bed(script_args$input,
-                           genome = script_args$genome,
-                           range = chrom)
-      # Convert bedGraph to bed
-      GenomicRanges::start(ifs) <-
-        GenomicRanges::start(ifs) - (script_args$window_size - script_args$step_size) /
-        2
-      GenomicRanges::width(ifs) <- script_args$window_size
-
-      logging::loginfo("IFS summary:")
-      print(ifs)
-
-      call_hotspot(
-        ifs,
-        fdr_cutoff = script_args$fdr,
-        pval_cutoff = script_args$pval,
-        local_pval_cutoff = script_args$pval,
-        method = script_args$hotspot_method
-      )
-    })
-
-  hotspot_standard <- do.call(c, args = hotspot_list)
-
-  if (is.null(hotspot_standard)) {
-    logging::loginfo("Called 0 hotspots")
-    # Write an empty file anyway. This is useful when you want to use snakemake
-    # and cragr together
-    system(str_interp("touch ${script_args$output}"))
-  } else {
-    n_hotspot <- length(hotspot_standard)
-    logging::loginfo(str_interp("Called ${n_hotspot} hotspots"))
-    logging::loginfo("Writing results to disk ...")
-    bedtorch::write_bed(hotspot_standard,
-                        file_path = script_args$output,
-                        comments = comments)
-  }
-}
+# subcommand_hotspot <- function(script_args) {
+#   # Determine chroms
+#   chroms <- system(paste0("tabix -l ", script_args$input), intern = TRUE)
+#   hotspot_list <- chroms %>%
+#     map(function(chrom) {
+#       # Load IFS score from input file
+#       logging::loginfo(str_interp("Loading IFS scores: ${script_args$input} ..."))
+#       ifs <-
+#         bedtorch::read_bed(script_args$input,
+#                            genome = script_args$genome,
+#                            range = chrom)
+#       # Convert bedGraph to bed
+#       GenomicRanges::start(ifs) <-
+#         GenomicRanges::start(ifs) - (script_args$window_size - script_args$step_size) /
+#         2
+#       GenomicRanges::width(ifs) <- script_args$window_size
+# 
+#       logging::loginfo("IFS summary:")
+#       print(ifs)
+# 
+#       call_hotspot(
+#         ifs,
+#         fdr_cutoff = script_args$fdr,
+#         pval_cutoff = script_args$pval,
+#         local_pval_cutoff = script_args$pval,
+#         method = script_args$hotspot_method
+#       )
+#     })
+# 
+#   hotspot_standard <- do.call(c, args = hotspot_list)
+# 
+#   if (is.null(hotspot_standard)) {
+#     logging::loginfo("Called 0 hotspots")
+#     # Write an empty file anyway. This is useful when you want to use snakemake
+#     # and cragr together
+#     system(str_interp("touch ${script_args$output}"))
+#   } else {
+#     n_hotspot <- length(hotspot_standard)
+#     logging::loginfo(str_interp("Called ${n_hotspot} hotspots"))
+#     logging::loginfo("Writing results to disk ...")
+#     bedtorch::write_bed(hotspot_standard,
+#                         file_path = script_args$output,
+#                         comments = comments)
+#   }
+# }
 
 
 # Perform signal-level analysis
 subcommand_signal <- function(script_args) {
-  hotspot <- bedtorch::read_bed(script_args$input) %>%
-    bedtorch::merge_bed(max_dist = script_args$merge_distance)
+  hotspot <- bedtorch::read_bed(script_args$input) 
+  # %>% bedtorch::merge_bed(max_dist = script_args$merge_distance)
 
   logging::loginfo("Loading signal file ...")
   signal <- unique(GenomicRanges::seqnames(hotspot)) %>%
@@ -455,8 +456,8 @@ if (subcommand == "ifs") {
   subcommand_ifs(script_args)
 } else if (subcommand == "peak") {
   subcommand_peak(script_args)
-} else if (subcommand == "hotspot") {
-  subcommand_hotspot(script_args)
+# } else if (subcommand == "hotspot") {
+#   subcommand_hotspot(script_args)
 } else if (subcommand == "signal") {
   subcommand_signal(script_args)
 } else {
