@@ -1,13 +1,13 @@
 # cragr pipeline
 
-localrules: all, merge_ifs, call_hotspot_pois, call_hotspot_nb, signal_level
+localrules: merge_ifs, signal_level
 
 # >>> Configuration >>>
 FULL_CORES = config.get("FULL_CORES", 16)
 PART_CORES = config.get("PART_CORES", 4)
 MEM_PER_CORE = config.get("MEM_PER_CORE", 1800)
 WALL_TIME_MAX = config.get("WALL_TIME_MAX", 2880)
-CORE_FACTOR = float(config.get("CORE_FACTOR", 1))
+CPU_FACTOR = float(config.get("CPU_FACTOR", 1))
 
 WALL_TIME_MAX = 2880
 MEM_PER_CORE = 1800
@@ -16,7 +16,7 @@ MEM_PER_CORE = 1800
 FDR_NB = config.get("FDR_NB", 0.25)
 FDR_POIS = config.get("FDR_POIS", 0.01)
 GC_CORRECT = config.get("GC_CORRECT", "TRUE")
-
+# <<< Configuration <<<
 
 def find_main_script():
     import subprocess
@@ -91,7 +91,7 @@ rule stage_ifs:
         label=lambda wildcards: f"cragr.stage_ifs.{wildcards.sid}.chr{wildcards.chrom}",
         main_script=lambda wildcards: find_main_script(),
         gc_correct=lambda wildcards: GC_CORRECT
-    threads: lambda wildcards, input, attempt: int(stage_ifs_cores(wildcards.chrom, input.frag) * (0.5 + 0.5 * attempt))
+    threads: lambda wildcards, input, attempt: int(CPU_FACTOR * stage_ifs_cores(wildcards.chrom, input.frag) * (0.5 + 0.5 * attempt))
     resources:
         mem_mb=lambda wildcards, threads: threads * MEM_PER_CORE,
         time=WALL_TIME_MAX,
@@ -99,7 +99,17 @@ rule stage_ifs:
         attempt=lambda wildcards, threads, attempt: attempt
     shell:
         """
-        tmpdir=$(mktemp -d)
+        set +u
+        if [ -z $SLURM_CLUSTER_NAME ]
+        then
+            echo Running in non-SLURM mode
+            tmpdir=$(mktemp -d)
+        else
+            echo Running in SLURM mode
+            tmpdir=$(mktemp -d -p $LOCAL)
+        fi
+        set -u
+        echo $tmpdir
 
         Rscript {params.main_script} ifs \
         -i {input.frag} \
@@ -126,7 +136,7 @@ rule stage_peak:
         label=lambda wildcards: f"cragr.stage_peak.{wildcards.sid}.chr{wildcards.chrom}",
         main_script=lambda wildcards: find_main_script(),
         gc_correct=lambda wildcards: GC_CORRECT
-    threads: lambda wildcards, input, attempt: int(stage_peak_cores(wildcards.chrom) * (0.5 + 0.5 * attempt))
+    threads: lambda wildcards, input, attempt: int(CPU_FACTOR * stage_peak_cores(wildcards.chrom) * (0.5 + 0.5 * attempt))
     resources:
         mem_mb=lambda wildcards, threads: threads * MEM_PER_CORE,
         time=WALL_TIME_MAX,
@@ -134,7 +144,17 @@ rule stage_peak:
         attempt=lambda wildcards, threads, attempt: attempt
     shell:
         """
-        tmpdir=$(mktemp -d)
+        set +u
+        if [ -z $SLURM_CLUSTER_NAME ]
+        then
+            echo Running in non-SLURM mode
+            tmpdir=$(mktemp -d)
+        else
+            echo Running in SLURM mode
+            tmpdir=$(mktemp -d -p $LOCAL)
+        fi
+        set -u
+        echo $tmpdir
 
         Rscript {params.main_script} peak \
         -i {input.ifs} \
@@ -160,7 +180,18 @@ rule merge_ifs:
         # hotspot_idx="result/{sid}.hotspot.bed.gz.tbi",
     shell:
         """
-        tmpdir=$(mktemp -d)
+        set +u
+        if [ -z $SLURM_CLUSTER_NAME ]
+        then
+            echo Running in non-SLURM mode
+            tmpdir=$(mktemp -d)
+        else
+            echo Running in SLURM mode
+            tmpdir=$(mktemp -d -p $LOCAL)
+        fi
+        set -u
+        echo $tmpdir
+
         output_ifs="$tmpdir"/ifs.bedGraph.gz
 
         echo "Merging IFS data"
@@ -193,7 +224,16 @@ rule ifs_bigwig:
     output: "result/{sid}.ifs.bw"
     shell:
         """
-        tmpdir=$(mktemp -d)
+        set +u
+        if [ -z $SLURM_CLUSTER_NAME ]
+        then
+            echo Running in non-SLURM mode
+            tmpdir=$(mktemp -d)
+        else
+            echo Running in SLURM mode
+            tmpdir=$(mktemp -d -p $LOCAL)
+        fi
+        set -u
         echo "Writing to temporary directory: $tmpdir"
 
         for chrom in 1 {{10..19}} 2 {{20..22}} {{3..9}}
@@ -210,110 +250,44 @@ rule ifs_bigwig:
         """
 
 
-rule call_hotspot_nb:
+rule call_hotspot:
     input:
         ifs="result/{sid}.ifs.bedGraph.gz",
         ifs_idx="result/{sid}.ifs.bedGraph.gz.tbi",
+        chrom_sizes="data/human_g1k_v37.chrom.sizes",
     output:
-        hotspot="result/{sid}.hotspot.nb.bed.gz",
-    log: "log/{sid}.hotspot.nb.log",
+        hotspot="result/{sid}.hotspot.bed.gz",
     params:
-        label=lambda wildcards: f"cragr.hotspot_nb.{wildcards.sid}",
-        main_script=lambda wildcards: find_main_script(),
-        fdr_nb=lambda wildcards: FDR_NB,
+        label=lambda wildcards: f"cragr.hotspot.{wildcards.sid}",
     shell:
         """
-        tmpdir=$(mktemp -d)
+        set +u
+        if [ -z $SLURM_CLUSTER_NAME ]
+        then
+            echo Running in non-SLURM mode
+            tmpdir=$(mktemp -d)
+        else
+            echo Running in SLURM mode
+            tmpdir=$(mktemp -d -p $LOCAL)
+        fi
+        set -u
+        echo $tmpdir
 
-        Rscript {params.main_script} hotspot \
-        -i {input.ifs} \
-        -o "$tmpdir"/hotspot.bed.gz \
-        --fdr {params.fdr_nb} \
-        --hotspot-method nb \
-        --verbose 2>&1 | tee {log}
+        set +e
+        zcat {input.ifs} | \
+        head -n 1000 | bioawk -t 'substr($1,1,1)=="#" && $1!="#chrom"' > $tmpdir/output.bed
+        set -e
 
-        mv "$tmpdir"/hotspot.bed.gz {output.hotspot}.tmp
-        mv {output.hotspot}.tmp {output.hotspot}
-        """
+        echo "#chrom\tstart\tend" >> $tmpdir/output.bed
+        bgzip $tmpdir/output.bed
 
-rule call_hotspot_pois:
-    input:
-        ifs="result/{sid}.ifs.bedGraph.gz",
-        ifs_idx="result/{sid}.ifs.bedGraph.gz.tbi",
-    output:
-        hotspot="result/{sid}.hotspot.pois.bed.gz",
-    log: "log/{sid}.hotspot.pois.log",
-    params:
-        label=lambda wildcards: f"cragr.hotspot_pois.{wildcards.sid}",
-        main_script=lambda wildcards: find_main_script(),
-        fdr_pois=lambda wildcards: FDR_POIS,
-    shell:
-        """
-        tmpdir=$(mktemp -d)
+        zcat {input.ifs} |
+        bioawk -t 'substr($1,1,1)!="#" && $16<=0.2 && $16!="."' |
+        bedtools slop -g {input.chrom_sizes} -i - -b 90 -header |
+        bedtools merge -header -i - -d 200 |
+        bgzip >> $tmpdir/output.bed.gz
 
-        Rscript {params.main_script} hotspot \
-        -i {input.ifs} \
-        -o "$tmpdir"/hotspot.bed.gz \
-        --fdr {params.fdr_pois} \
-        --pval 0.00001 \
-        --hotspot-method pois \
-        --verbose 2>&1 | tee {log}
-
-        mv "$tmpdir"/hotspot.bed.gz {output.hotspot}.tmp
-        mv {output.hotspot}.tmp {output.hotspot}
-        """
-
-
-rule call_hotspot_nb_fdr:
-    input:
-        ifs="result/{sid}.ifs.bedGraph.gz",
-        ifs_idx="result/{sid}.ifs.bedGraph.gz.tbi",
-    output:
-        hotspot="result/{sid}.hotspot.nb.fdr{fdr}.bed.gz",
-    log: "log/{sid}.hotspot.nb.fdr{fdr}.log",
-    params:
-        label=lambda wildcards: f"cragr.hotspot_nb.{wildcards.sid}",
-        main_script=lambda wildcards: find_main_script(),
-        fdr_nb=lambda wildcards: FDR_NB,
-    shell:
-        """
-        tmpdir=$(mktemp -d)
-
-        Rscript {params.main_script} hotspot \
-        -i {input.ifs} \
-        -o "$tmpdir"/hotspot.bed.gz \
-        --fdr {wildcards.fdr} \
-        --hotspot-method nb \
-        --verbose 2>&1 | tee {log}
-
-        mv "$tmpdir"/hotspot.bed.gz {output.hotspot}.tmp
-        mv {output.hotspot}.tmp {output.hotspot}
-        """
-
-
-rule call_hotspot_pois_threshold:
-    input:
-        ifs="result/{sid}.ifs.bedGraph.gz",
-        ifs_idx="result/{sid}.ifs.bedGraph.gz.tbi",
-    output:
-        hotspot="result/{sid}.hotspot.pois.pval{threshold}.bed.gz",
-    log: "log/{sid}.hotspot.pois.pval{threshold}.log",
-    params:
-        label=lambda wildcards: f"cragr.hotspot_nb.{wildcards.sid}",
-        main_script=lambda wildcards: find_main_script(),
-        fdr_nb=lambda wildcards: FDR_NB,
-    shell:
-        """
-        tmpdir=$(mktemp -d)
-
-        Rscript {params.main_script} hotspot \
-        -i {input.ifs} \
-        -o "$tmpdir"/hotspot.bed.gz \
-        --pval {wildcards.threshold} \
-        --hotspot-method pois \
-        --verbose 2>&1 | tee {log}
-
-        mv "$tmpdir"/hotspot.bed.gz {output.hotspot}.tmp
+        mv $tmpdir/output.bed.gz {output.hotspot}.tmp
         mv {output.hotspot}.tmp {output.hotspot}
         """
 

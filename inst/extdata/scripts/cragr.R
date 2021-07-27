@@ -295,8 +295,6 @@ subcommand_ifs <- function(script_args) {
   if (script_args$gc_correct) {
     ifs <- calc_gc(ifs)
     log_mem("Done calculating GC contents")
-  } else {
-    ifs$score0 <- NA
   }
 
   bedtorch::write_bed(ifs, file_path = script_args$output)
@@ -320,6 +318,8 @@ subcommand_peak <- function(script_args) {
     logging::loginfo("Performing GC correction ...")
     ifs <- gc_correct(ifs, span = 0.75)
     log_mem("Done GC correction")
+  } else {
+    ifs$score0 <- NA
   }
 
   logging::loginfo("Calculating z-scores ...")
