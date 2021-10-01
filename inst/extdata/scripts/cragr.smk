@@ -1,6 +1,6 @@
 # cragr pipeline
 
-localrules: merge_ifs, signal_level
+# localrules: merge_ifs, signal_level
 
 # >>> Configuration >>>
 FULL_CORES = config.get("FULL_CORES", 16)
@@ -90,7 +90,6 @@ rule stage_ifs:
     params:
         label=lambda wildcards: f"cragr.stage_ifs.{wildcards.sid}.chr{wildcards.chrom}",
         main_script=lambda wildcards: find_main_script(),
-        gc_correct=lambda wildcards: GC_CORRECT
     threads: lambda wildcards, input, attempt: int(CPU_FACTOR * stage_ifs_cores(wildcards.chrom, input.frag) * (0.5 + 0.5 * attempt))
     resources:
         mem_mb=lambda wildcards, threads: threads * MEM_PER_CORE,
@@ -99,22 +98,12 @@ rule stage_ifs:
         attempt=lambda wildcards, threads, attempt: attempt
     shell:
         """
-        set +u
-        if [ -z $SLURM_CLUSTER_NAME ]
-        then
-            echo Running in non-SLURM mode
-            tmpdir=$(mktemp -d)
-        else
-            echo Running in SLURM mode
-            tmpdir=$(mktemp -d -p $LOCAL)
-        fi
-        set -u
-        echo $tmpdir
+        set +u; if [ -z $LOCAL ] || [ -z $SLURM_CLUSTER_NAME ]; then tmpdir=$(mktemp -d); else tmpdir=$(mktemp -d -p $LOCAL); fi; set -u
 
         Rscript {params.main_script} ifs \
         -i {input.frag} \
         -o "$tmpdir"/output.bed.gz \
-        --gc-correct {params.gc_correct} \
+        --gc-correct TRUE \
         -m {input.mappability} \
         --chrom {wildcards.chrom} \
         --verbose 2>&1 | tee {log}
@@ -129,13 +118,11 @@ rule stage_peak:
         ifs="temp/{sid}.ifs.raw.chr{chrom}.bed.gz",
         mappability="data/mappability.hs37-1kg.w200.s20.0_9.bed.gz",
     output:
-        ifs=temp("temp/{sid}.ifs.chr{chrom}.bedGraph.gz"),
-        # hotspot="temp/{sid}.hotspot.chr{chrom}.bed.gz",
-    log: "log/{sid}.chr{chrom}.stage_peak.log"
+        ifs=temp("temp/{sid}.ifs.{gc_type}.chr{chrom}.bedGraph.gz"),
+    log: "log/{sid}.{gc_type}.chr{chrom}.stage_peak.log"
     params:
-        label=lambda wildcards: f"cragr.stage_peak.{wildcards.sid}.chr{wildcards.chrom}",
+        label=lambda wildcards: f"cragr.stage_peak.{wildcards.sid}.{wildcards.gc_type}.chr{wildcards.chrom}",
         main_script=lambda wildcards: find_main_script(),
-        gc_correct=lambda wildcards: GC_CORRECT
     threads: lambda wildcards, input, attempt: int(CPU_FACTOR * stage_peak_cores(wildcards.chrom) * (0.5 + 0.5 * attempt))
     resources:
         mem_mb=lambda wildcards, threads: threads * MEM_PER_CORE,
@@ -144,22 +131,19 @@ rule stage_peak:
         attempt=lambda wildcards, threads, attempt: attempt
     shell:
         """
-        set +u
-        if [ -z $SLURM_CLUSTER_NAME ]
+        set +u; if [ -z $LOCAL ] || [ -z $SLURM_CLUSTER_NAME ]; then tmpdir=$(mktemp -d); else tmpdir=$(mktemp -d -p $LOCAL); fi; set -u
+
+        if [ "{wildcards.gc_type}" == "gc" ]
         then
-            echo Running in non-SLURM mode
-            tmpdir=$(mktemp -d)
+            gc_correct=TRUE
         else
-            echo Running in SLURM mode
-            tmpdir=$(mktemp -d -p $LOCAL)
+            gc_correct=FALSE
         fi
-        set -u
-        echo $tmpdir
 
         Rscript {params.main_script} peak \
         -i {input.ifs} \
         -o "$tmpdir"/ifs.bedGraph.gz \
-        --gc-correct {params.gc_correct} \
+        --gc-correct $gc_correct \
         -m {input.mappability} \
         --chrom {wildcards.chrom} \
         --verbose 2>&1 | tee {log}
@@ -171,26 +155,21 @@ rule stage_peak:
 
 rule merge_ifs:
     input:
-        ifs=expand("temp/{{sid}}.ifs.chr{chrom}.bedGraph.gz", chrom=range(1, 23)),
-        # hotspot=expand("temp/{{sid}}.hotspot.chr{chrom}.bed.gz", chrom=range(1, 23))
+        ifs=expand("temp/{{sid}}.ifs.{{gc_type}}.chr{chrom}.bedGraph.gz", chrom=range(1, 23)),
     output:
-        ifs="result/{sid}.ifs.bedGraph.gz",
-        ifs_idx="result/{sid}.ifs.bedGraph.gz.tbi",
-        # hotspot="result/{sid}.hotspot.bed.gz",
-        # hotspot_idx="result/{sid}.hotspot.bed.gz.tbi",
+        ifs="result/{sid}.ifs.{gc_type,(gc|nogc)}.bedGraph.gz",
+        ifs_idx="result/{sid}.ifs.{gc_type}.bedGraph.gz.tbi",
+    threads: lambda wildcards, input, attempt: int(2 * (0.5 + 0.5 * attempt))
+    resources:
+        mem_mb=lambda wildcards, threads: threads * MEM_PER_CORE,
+        time=WALL_TIME_MAX,
+        time_min=300,
+        attempt=lambda wildcards, threads, attempt: attempt
+    params:
+        label=lambda wildcards: f"cragr.merge_ifs.{wildcards.sid}.{wildcards.gc_type}",
     shell:
         """
-        set +u
-        if [ -z $SLURM_CLUSTER_NAME ]
-        then
-            echo Running in non-SLURM mode
-            tmpdir=$(mktemp -d)
-        else
-            echo Running in SLURM mode
-            tmpdir=$(mktemp -d -p $LOCAL)
-        fi
-        set -u
-        echo $tmpdir
+        set +u; if [ -z $LOCAL ] || [ -z $SLURM_CLUSTER_NAME ]; then tmpdir=$(mktemp -d); else tmpdir=$(mktemp -d -p $LOCAL); fi; set -u
 
         output_ifs="$tmpdir"/ifs.bedGraph.gz
 
@@ -218,23 +197,21 @@ rule merge_ifs:
 # Convert IFS bedGraph files to bigWig files
 rule ifs_bigwig:
     input:
-        ifs="result/{sid}.ifs.bedGraph.gz",
-        ifs_idx="result/{sid}.ifs.bedGraph.gz.tbi",
+        ifs="result/{sid}.ifs.{gc_type}.bedGraph.gz",
+        ifs_idx="result/{sid}.ifs.{gc_type}.bedGraph.gz.tbi",
         chrom_sizes="data/human_g1k_v37.chrom.sizes",
-    output: "result/{sid}.ifs.bw"
+    output: "result/{sid}.ifs.{gc_type,(gc|nogc)}.bw"
+    threads: lambda wildcards, input, attempt: int(2 * (0.5 + 0.5 * attempt))
+    resources:
+        mem_mb=lambda wildcards, threads: threads * MEM_PER_CORE,
+        time=WALL_TIME_MAX,
+        time_min=300,
+        attempt=lambda wildcards, threads, attempt: attempt
+    params:
+        label=lambda wildcards: f"cragr.ifs_bigwig.{wildcards.sid}.{wildcards.gc_type}",
     shell:
         """
-        set +u
-        if [ -z $SLURM_CLUSTER_NAME ]
-        then
-            echo Running in non-SLURM mode
-            tmpdir=$(mktemp -d)
-        else
-            echo Running in SLURM mode
-            tmpdir=$(mktemp -d -p $LOCAL)
-        fi
-        set -u
-        echo "Writing to temporary directory: $tmpdir"
+        set +u; if [ -z $LOCAL ] || [ -z $SLURM_CLUSTER_NAME ]; then tmpdir=$(mktemp -d); else tmpdir=$(mktemp -d -p $LOCAL); fi; set -u
 
         for chrom in 1 {{10..19}} 2 {{20..22}} {{3..9}}
         do
@@ -250,28 +227,54 @@ rule ifs_bigwig:
         """
 
 
+rule ifs_dried:
+    input: "result/{sid}.ifs.{gc_type}.bedGraph.gz",
+    output:
+        ifs="result/{sid}.ifs.{gc_type}.dried.bedGraph.gz",
+        ifs_tbi="result/{sid}.ifs.{gc_type}.dried.bedGraph.gz.tbi",
+    threads: lambda wildcards, input, attempt: int(2 * (0.5 + 0.5 * attempt))
+    resources:
+        mem_mb=lambda wildcards, threads: threads * MEM_PER_CORE,
+        time=WALL_TIME_MAX,
+        time_min=300,
+        attempt=lambda wildcards, threads, attempt: attempt
+    params:
+        label=lambda wildcards: f"cragr.ifs_dried.{wildcards.sid}.{wildcards.gc_type}",
+    shell:
+        """
+        set +u; if [ -z $LOCAL ] || [ -z $SLURM_CLUSTER_NAME ]; then tmpdir=$(mktemp -d); else tmpdir=$(mktemp -d -p $LOCAL); fi; set -u
+
+        zcat {input} | bioawk -t 'substr($0,1,1)=="#" || ($16!="." && $16<=0.75)' | bgzip > $tmpdir/output.bedGraph.gz
+        tabix -p bed $tmpdir/output.bedGraph.gz
+
+        mv $tmpdir/output.bedGraph.gz {output.ifs}.tmp
+        mv $tmpdir/output.bedGraph.gz.tbi {output.ifs_tbi}.tmp
+        mv {output.ifs}.tmp {output.ifs}
+        mv {output.ifs_tbi}.tmp {output.ifs_tbi}
+
+        rm -rf $tmpdir
+        """
+
+
+
 rule call_hotspot:
     input:
-        ifs="result/{sid}.ifs.bedGraph.gz",
-        ifs_idx="result/{sid}.ifs.bedGraph.gz.tbi",
+        ifs="result/{sid}.ifs.{gc_type}.bedGraph.gz",
+        ifs_idx="result/{sid}.ifs.{gc_type}.bedGraph.gz.tbi",
         chrom_sizes="data/human_g1k_v37.chrom.sizes",
     output:
-        hotspot="result/{sid}.hotspot.bed.gz",
+        hotspot="result/{sid}.hotspot.{gc_type,(gc|nogc)}.bed.gz",
+    threads: lambda wildcards, input, attempt: int(2 * (0.5 + 0.5 * attempt))
+    resources:
+        mem_mb=lambda wildcards, threads: threads * MEM_PER_CORE,
+        time=WALL_TIME_MAX,
+        time_min=300,
+        attempt=lambda wildcards, threads, attempt: attempt
     params:
         label=lambda wildcards: f"cragr.hotspot.{wildcards.sid}",
     shell:
         """
-        set +u
-        if [ -z $SLURM_CLUSTER_NAME ]
-        then
-            echo Running in non-SLURM mode
-            tmpdir=$(mktemp -d)
-        else
-            echo Running in SLURM mode
-            tmpdir=$(mktemp -d -p $LOCAL)
-        fi
-        set -u
-        echo $tmpdir
+        set +u; if [ -z $LOCAL ] || [ -z $SLURM_CLUSTER_NAME ]; then tmpdir=$(mktemp -d); else tmpdir=$(mktemp -d -p $LOCAL); fi; set -u
 
         set +e
         zcat {input.ifs} | \
@@ -289,6 +292,8 @@ rule call_hotspot:
 
         mv $tmpdir/output.bed.gz {output.hotspot}.tmp
         mv {output.hotspot}.tmp {output.hotspot}
+
+        rm -rf $tmpdir
         """
 
 
