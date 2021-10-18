@@ -4,6 +4,7 @@ read_fragments <- function(file_path, range = NULL, genome = NULL) {
   frag <- bedtorch::read_bed(file_path = file_path,
                              range = range,
                              genome = genome)
+  GenomicRanges::strand(frag) <- "*"
   logging::logdebug("Done reading BED data")
   frag_metadata <- mcols(frag)
 

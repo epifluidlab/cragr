@@ -32,17 +32,19 @@ preprocess_fragment <-
 
     if (exclude_soft_clipping &&
       all(c("cigar1", "cigar2") %in% colnames(mcols(fragment_data)))) {
+      logging::loginfo("Removing soft-clipping fragments ...")
       fragment_data <-
         fragment_data[!str_detect(fragment_data$cigar1, "^[0-9]+S") &
           !str_detect(fragment_data$cigar2, "[0-9]+S$")]
     }
 
     # Exclude fragments from certain regions
-    excluded_regions <-
-      build_exclude_region(
-        chrom = chrom,
-        blacklist_region = blacklist_region
-      )
+    if (!is.null(blacklist_region)) {
+      excluded_regions <-
+        build_exclude_region(chrom = chrom,
+                             blacklist_region = blacklist_region)
+    } else
+      excluded_regions <- NULL
 
     # Each fragment is characterized by the midpoint rather than the start-end pair
     #
@@ -65,11 +67,12 @@ preprocess_fragment <-
       round((start(fragment_data) + end(fragment_data)) / 2)
     start(fragment_data) <- midpoint
     width(fragment_data) <- 1
+    fragment_data <- sort(fragment_data)
 
-    logging::loginfo("Applying blacklist region filter ...")
     # Exclude dark regions
-    logging::loginfo("Excluding blacklist regions ...")
+    logging::loginfo("Applying blacklist region filter ...")
     if (!is.null(excluded_regions)) {
+      logging::loginfo("Excluding blacklist regions ...")
       hits <- queryHits(findOverlaps(fragment_data, excluded_regions))
       # Caution: hits may be empty!
       if (length(hits) > 0) {
@@ -98,10 +101,10 @@ calculate_raw_ifs <-
     ifs <- fragment_data[,
       .(
         chrom = chrom[1],
-        start = window_id * step_size,
-        end = (window_id + 1) * step_size,
+        start = as.integer(window_id * step_size),
+        end = as.integer((window_id + 1) * step_size),
         score = .N + sum(length, na.rm = TRUE) / avg_len,
-        cov = .N
+        cov = as.integer(.N)
       ),
       by = window_id
     ][, window_id := NULL]
@@ -109,6 +112,7 @@ calculate_raw_ifs <-
       bedtorch::as.bedtorch_table(genome = attr(fragment_data, "genome"))
     data.table::setkeyv(ifs, c("chrom", "start", "end"))
 
+    logging::logdebug("Applying rollmean")
     # Perform rolling sum over the sliding windows, therefore we have results
     # for rolling windows (200bp, window_size) at step size of (20bp, step_size)
     ifs <-
@@ -116,6 +120,9 @@ calculate_raw_ifs <-
         window_size = window_size,
         step_size = step_size
       )
+
+    # ifs[, avg_len := avg_len]
+    return(ifs)
   }
 
 
@@ -172,28 +179,29 @@ ifs_score <-
       chrom <- as.character(chrom)
     }
 
-    if (length(chrom) > 1) {
-      # For multiple chromosomes, sequentially
-      ifs <-
-        chrom %>%
-        map(function(chrom) {
-          ifs_score(
-            fragment_data,
-            chrom = chrom,
-            window_size = window_size,
-            step_size = step_size,
-            gc_correct = gc_correct,
-            blacklist_region = blacklist_region,
-            high_mappability_region = high_mappability_region,
-            min_mapq = min_mapq,
-            min_fraglen = min_fraglen,
-            max_fraglen = max_fraglen,
-            exclude_soft_clipping = exclude_soft_clipping
-          )
-        }) %>%
-        do.call(c, args = .)
-      return(ifs)
-    }
+    assertthat::assert_that(length(chrom) == 1)
+    # if (length(chrom) > 1) {
+    #   # For multiple chromosomes, sequentially
+    #   ifs <-
+    #     chrom %>%
+    #     map(function(chrom) {
+    #       ifs_score(
+    #         fragment_data,
+    #         chrom = chrom,
+    #         window_size = window_size,
+    #         step_size = step_size,
+    #         gc_correct = gc_correct,
+    #         blacklist_region = blacklist_region,
+    #         high_mappability_region = high_mappability_region,
+    #         min_mapq = min_mapq,
+    #         min_fraglen = min_fraglen,
+    #         max_fraglen = max_fraglen,
+    #         exclude_soft_clipping = exclude_soft_clipping
+    #       )
+    #     }) %>%
+    #     do.call(c, args = .)
+    #   return(ifs)
+    # }
 
     fragment_data <-
       preprocess_fragment(
@@ -208,6 +216,8 @@ ifs_score <-
 
     log_mem("Done preprocessing fragment")
 
+    avg_len <- mean(fragment_data$length)
+    frag_cnt <- length(fragment_data$length)
     ifs <-
       calculate_raw_ifs(fragment_data,
         window_size = window_size,
@@ -237,7 +247,7 @@ ifs_score <-
 
     log_mem("Done mappability filtering")
 
-    ifs
+    return(list(ifs = ifs, avg_len = avg_len, frag_cnt = frag_cnt))
   }
 
 
@@ -278,30 +288,31 @@ calc_ifs_z_score <- function(ifs) {
 #'
 #' @export
 calc_gc <- function(ifs) {
-  genome <- GenomeInfoDb::genome(ifs) %>% unique()
-  # Only works for hs37-1kg
-  assertthat::are_equal(genome, "hs37-1kg")
-  assertthat::assert_that(requireNamespace("BSgenome.Hsapiens.1000genomes.hs37d5"))
-  bsgenome <- BSgenome.Hsapiens.1000genomes.hs37d5::hs37d5
+  genome_name <- GenomeInfoDb::genome(ifs) %>% unique()
+  assertthat::assert_that(is_scalar_character(genome_name) &&
+                (genome_name %in% c("GRCh37", "hs37-1kg", "GRCh38")))
 
-  # Dirty hack: need to adjust the seqinfo
-  logging::loginfo("Calculating GC content for each fragment...")
-  seqinfo_hs37_1kg <- seqinfo(ifs)
+  bsgenome <- switch(
+    genome_name,
+    "GRCh37" = BSgenome::getBSgenome(genome = "BSgenome.Hsapiens.1000genomes.hs37d5", load.only = TRUE),
+    "hs37-1kg" = BSgenome::getBSgenome(genome = "BSgenome.Hsapiens.1000genomes.hs37d5", load.only = TRUE),
+    "GRCh38" = BSgenome::getBSgenome(genome = "BSgenome.Hsapiens.1000genomes.hs37d5", load.only = TRUE),
+    stop(paste0("Invalid genome: ", genome_name))
+  )
 
-  levels_hs37_1kg <- seqlevels(ifs)
-  levels_bsgenome <- seqlevels(bsgenome)
+  seqlevels(ifs) <- seqlevels(bsgenome)
+  seqinfo(ifs) <- seqinfo(bsgenome)
 
-  seqinfo(ifs, new2old = match(levels_bsgenome, levels_hs37_1kg)) <-
-    seqinfo(bsgenome)
-  seqs <- BSgenome::getSeq(bsgenome, ifs)
-  ifs$gc <-
-    (Biostrings::letterFrequency(seqs, letters = "CG", as.prob = TRUE))[, 1]
+  genome_seq <- BSgenome::getSeq(bsgenome, ifs)
+  gc <- Biostrings::letterFrequency(genome_seq, letters = "CG", as.prob = TRUE)[, 1]
 
-  # Restore the seqinfo
-  seqinfo(ifs, new2old = match(levels_hs37_1kg, levels_bsgenome)) <-
-    seqinfo_hs37_1kg
+  # Discard a bin if it contains too many Ns
+  mask_threshold <- 0.01
+  base_masked <- Biostrings::letterFrequency(genome_seq, letters = "N", as.prob = TRUE)[, 1] > mask_threshold
+  gc[base_masked] <- NA
 
-  ifs
+  ifs$gc <- gc
+  return(ifs)
 }
 
 
@@ -393,7 +404,7 @@ slide_window <- function(ifs, window_size, step_size) {
     ) %>%
     bedtorch::as.bedtorch_table(genome = genome)
   chrom_sizes[, size := end - start]
-
+  
   n <- window_size %/% step_size
 
   # Construct a continuous IFS score track, with filled 0s.
@@ -406,33 +417,34 @@ slide_window <- function(ifs, window_size, step_size) {
     end <- as.integer((gid + 1) * step_size)
     list(chrom, start, end)
   }]
-
+  
   data.table::setkey(scaffold, "chrom", "start", "end")
   ifs <-
     ifs[scaffold][is.na(score), score := 0][is.na(cov), cov := 0]
   rm(scaffold)
-
+  
   ifs <- ifs[, `:=`(
-    end = start + window_size,
+    end = as.integer(start + window_size),
     score = rollsum(
       score,
       k = n,
       na_pad = TRUE,
       align = "left"
     ),
-    cov = rollsum(
+    cov = as.integer(rollsum(
       cov,
       k = n,
       na_pad = TRUE,
       align = "left"
-    )
+    ))
   )][!is.na(score) & !is.na(cov)]
-
+  
   # Eliminate float-point errors
   ifs[abs(score) < 1e-9, score := 0]
 
   data.table::setkey(ifs, "chrom", "start", "end")
   ifs <- bedtorch::as.bedtorch_table(ifs, genome = genome)
+  return(ifs)
 }
 
 

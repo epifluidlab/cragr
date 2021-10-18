@@ -33,11 +33,12 @@ parse_script_args <- function() {
         optparse::make_option(c("-i", "--input"), help = "Path to the input file. If there are multiple input files, they should be separated by colons"),
         optparse::make_option(c("-o", "--output"), type = "character", help = "Path to output file"),
         # optparse::make_option(c("--output-hotspot"), type = "character", help = "Directory for hotspot output"),
-        optparse::make_option(c("--genome"), default = "hs37-1kg", help = "Genome of the input"),
+        optparse::make_option(c("--genome"), type = "character", help = "Genome of the input"),
         optparse::make_option(
           c("-g", "--gc-correct"),
-          default = TRUE,
-          help = "Path to the GC% file. Default is NULL, i.e. do NOT perform GC correction"
+          default = FALSE,
+          action = "store_true",
+          help = "Whether to perform GC correction"
         ),
         optparse::make_option(
           c("-m", "--high-mappability"),
@@ -68,7 +69,7 @@ parse_script_args <- function() {
         optparse::make_option(
           c("--exclude-region"),
           type = "character",
-          default = "encode.blacklist.hs37-1kg",
+          default = NULL, # "encode.blacklist.hs37-1kg",
           help = "BED files defining regions to be excluded from the analysis, separated by colon. Default is the ENCODE Blacklist: https://www.nature.com/articles/s41598-019-45839-z, which is included in this R package"
         ),
         optparse::make_option(
@@ -139,9 +140,13 @@ parse_script_args <- function() {
       stop("window_size must be multiples of step_size")
 
     # genome must be hs37-1kg
-    if (script_args$genome != "hs37-1kg") {
-      stop("Currently, only genome hs37-1kg is supported")
-    }
+    assertthat::assert_that(
+      is_scalar_character(script_args$genome) &&
+        script_args$genome %in% c("hs37-1kg", "GRCh37", "GRCh38")
+    )
+    # if (script_args$genome != "hs37-1kg") {
+    #   stop("Currently, only genome hs37-1kg is supported")
+    # }
 
     assertthat::assert_that(script_args$hotspot_method %in% c("pois", "nb"))
 
@@ -227,9 +232,16 @@ log_mem <- function(label = "Unknown") {
 subcommand_ifs <- function(script_args) {
   logging::loginfo("Input: fragment data")
 
-  if (!requireNamespace("BSgenome.Hsapiens.1000genomes.hs37d5")) {
-    stop("Package BSgenome.Hsapiens.1000genomes.hs37d5 is requried for genome hs37-1kg")
-  }
+  # Make sure the genome is available
+  bsgenome <- switch(
+    script_args$genome,
+    "GRCh37" = "BSgenome.Hsapiens.1000genomes.hs37d5",
+    "hs37-1kg" = "BSgenome.Hsapiens.1000genomes.hs37d5",
+    "GRCh38" = "BSgenome.Hsapiens.NCBI.GRCh38",
+    stop(paste0("Invalid genome: ", genome_name))
+  )
+  
+  assertthat::assert_that(requireNamespace(bsgenome), msg = str_interp("${bsgenome} is required"))
 
   frag <- script_args$input %>% map(function(input_file) {
     logging::loginfo(str_interp("Loading fragments: ${input_file} ..."))
@@ -255,7 +267,7 @@ subcommand_ifs <- function(script_args) {
   log_mem("Done loading fragments")
 
   logging::loginfo("Calculating IFS scores ...")
-  ifs <- ifs_score(
+  result <- ifs_score(
     frag,
     window_size = script_args$window_size,
     step_size = script_args$step_size,
@@ -269,17 +281,28 @@ subcommand_ifs <- function(script_args) {
   )
 
   rm(frag)
+  
+  ifs <- result$ifs
+  avg_len <- result$avg_len
+  frag_cnt <- result$frag_cnt
+  
+  comments <-
+    c(comments,
+      str_interp("avg_len=${avg_len}"),
+      str_interp("frag_cnt=${frag_cnt}"))
 
   logging::loginfo("Raw IFS summary:")
   print(ifs)
   log_mem("Done calculating raw IFS scores")
 
-  if (script_args$gc_correct) {
+  # if (script_args$gc_correct) {
+  # Always calculate GC
+  if (TRUE) {
     ifs <- calc_gc(ifs)
     log_mem("Done calculating GC contents")
   }
 
-  bedtorch::write_bed(ifs, file_path = script_args$output)
+  bedtorch::write_bed(ifs, file_path = script_args$output, comments = comments)
 }
 
 
@@ -296,6 +319,9 @@ subcommand_peak <- function(script_args) {
     logging::loginfo("Performing GC correction ...")
     ifs <- gc_correct(ifs, span = 0.75)
     log_mem("Done GC correction")
+  } else {
+    # No GC correction, just placeholder
+    ifs$score0 <- ifs$score
   }
 
   logging::loginfo("Calculating z-scores ...")
@@ -398,15 +424,46 @@ subcommand_signal <- function(script_args) {
 }
 
 # Main ----
-parse_script_args_result <- parse_script_args()
-subcommand <- parse_script_args_result[[1]]
-script_args <- parse_script_args_result[[2]]
-rm(parse_script_args_result)
+if (interactive()) {
+  subcommand <- "ifs"
+  
+  # example
+  script_args <- list(
+    input = "sandbox/frag/Pilot2_34.GRCh38.frag.bed.gz",
+    input_ifs = "sandbox/Pilot2_34.GRCh38.ifs.raw.chr21.bed.gz",
+    # input_hotspot = "sandbox/xh_intermediate/batch2_res_merged_sort.chr21.hotspot.bed.gz",
+    # genome = "hs37-1kg",
+    output = "sandbox/Pilot2_34.GRCh38.ifs.raw.chr21.bed.gz",
+    genome = "GRCh38",
+    gc_correct = FALSE,
+    high_mappability = "crag/data/mappability.hg38.w200.s20.0_9.bed.gz",
+    chrom = "21",
+    exclude_chrom = NULL,
+    min_mapq = 30L,
+    min_fraglen = 50L,
+    max_fraglen = 1000L,
+    exclude_region = NULL,
+    exclude_soft_clipping = TRUE,
+    window_size = 200L,
+    step_size = 20L,
+    cpois = FALSE,
+    fdr = 0.01,
+    local_pval = 1e-5,
+    verbose = TRUE
+  )
+} else {
+  parse_script_args_result <- parse_script_args()
+  subcommand <- parse_script_args_result[[1]]
+  script_args <- parse_script_args_result[[2]]
+  rm(parse_script_args_result)
+}
+
 
 # Build comment lines
 comments <- c(
-  paste0("cragr version: ", as.character(packageVersion("cragr"))),
-  paste0("bedtorch version: ", as.character(packageVersion("bedtorch"))),
+  paste0("cragr_version=", as.character(packageVersion("cragr"))),
+  paste0("bedtorch_version=", as.character(packageVersion("bedtorch"))),
+  paste0("create_time=", lubridate::now() %>% format("%Y-%m-%dT%H:%M:%S%z")),
   # All items in script_args
   names(script_args) %>% purrr::map_chr(function(name) {
     v <- script_args[[name]]
