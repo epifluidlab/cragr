@@ -22,12 +22,15 @@ read_fragments <- function(file_path, range = NULL, genome = NULL) {
     }
 
     if (!"mapq" %in% colnames(frag_metadata))
-      stop("Cannot find mapq in the data frame")
+      logging::logwarn("Cannot find mapq in the data frame")
   }
 
-  # Only need mapq. Drop other columns
-  mcols(frag) <- frag_metadata["mapq"]
-  if (mapq_guessed)
-    print(frag)
+  if (mapq_guessed) {
+    # Only need mapq. Drop other columns
+    mcols(frag) <- frag_metadata["mapq"]
+  } else {
+    mcols(frag) <- NULL
+  }
+  print(frag)
   frag
 }
