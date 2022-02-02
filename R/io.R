@@ -31,6 +31,8 @@ read_fragments <- function(file_path, range = NULL, genome = NULL) {
   } else {
     mcols(frag) <- NULL
   }
+
+  GenomicRanges::strand(frag) <- "*"
   print(frag)
   frag
 }

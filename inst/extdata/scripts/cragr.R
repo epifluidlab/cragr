@@ -259,7 +259,7 @@ subcommand_ifs <- function(script_args) {
     "GRCh38" = "BSgenome.Hsapiens.NCBI.GRCh38",
     stop(paste0("Invalid genome: ", genome_name))
   )
-  
+
   assertthat::assert_that(requireNamespace(bsgenome), msg = str_interp("${bsgenome} is required"))
 
   frag <- script_args$input %>% map(function(input_file) {
@@ -278,8 +278,22 @@ subcommand_ifs <- function(script_args) {
       }
     }
 
+    # Apply filters
+    min_mapq <- as.integer(script_args$min_mapq)
+    if (isTRUE(min_mapq > 0) && "mapq" %in% colnames(mcols(frag))) {
+      frag <- frag[frag$mapq >= min_mapq]
+    }
+
+    logging::loginfo("Applying fragment length filter ...")
+    min_fraglen <- as.integer(script_args$min_fraglen) %||% 0
+    max_fraglen <- as.integer(script_args$max_fraglen) %||% Inf
+    frag <-
+      frag[between(width(frag), min_fraglen, max_fraglen)]
+
     frag
   }) %>% do.call(c, args = .)
+
+  frag <- sort(frag)
 
   logging::loginfo("Fragments summary:")
   print(frag)
@@ -300,11 +314,11 @@ subcommand_ifs <- function(script_args) {
   )
 
   rm(frag)
-  
+
   ifs <- result$ifs
   avg_len <- result$avg_len
   frag_cnt <- result$frag_cnt
-  
+
   comments <-
     c(comments,
       str_interp("avg_len=${avg_len}"),
@@ -386,10 +400,10 @@ subcommand_peak <- function(script_args) {
 #         GenomicRanges::start(ifs) - (script_args$window_size - script_args$step_size) /
 #         2
 #       GenomicRanges::width(ifs) <- script_args$window_size
-# 
+#
 #       logging::loginfo("IFS summary:")
 #       print(ifs)
-# 
+#
 #       call_hotspot(
 #         ifs,
 #         fdr_cutoff = script_args$fdr,
@@ -398,9 +412,9 @@ subcommand_peak <- function(script_args) {
 #         method = script_args$hotspot_method
 #       )
 #     })
-# 
+#
 #   hotspot_standard <- do.call(c, args = hotspot_list)
-# 
+#
 #   if (is.null(hotspot_standard)) {
 #     logging::loginfo("Called 0 hotspots")
 #     # Write an empty file anyway. This is useful when you want to use snakemake
@@ -419,7 +433,7 @@ subcommand_peak <- function(script_args) {
 
 # Perform signal-level analysis
 subcommand_signal <- function(script_args) {
-  hotspot <- bedtorch::read_bed(script_args$input) 
+  hotspot <- bedtorch::read_bed(script_args$input)
   # %>% bedtorch::merge_bed(max_dist = script_args$merge_distance)
 
   logging::loginfo("Loading signal file ...")
@@ -449,7 +463,7 @@ subcommand_signal <- function(script_args) {
 # Main ----
 if (interactive()) {
   subcommand <- "ifs"
-  
+
   # example
   script_args <- list(
     input = "sandbox/frag/Pilot2_34.GRCh38.frag.bed.gz",
