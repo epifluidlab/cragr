@@ -280,7 +280,7 @@ subcommand_ifs <- function(script_args) {
 
     # Apply filters
     min_mapq <- as.integer(script_args$min_mapq)
-    if (isTRUE(min_mapq > 0) && "mapq" %in% colnames(mcols(frag))) {
+    if (isTRUE(min_mapq > 0) && "mapq" %in% colnames(GenomicRanges::mcols(frag))) {
       frag <- frag[frag$mapq >= min_mapq]
     }
 
@@ -288,7 +288,7 @@ subcommand_ifs <- function(script_args) {
     min_fraglen <- as.integer(script_args$min_fraglen) %||% 0
     max_fraglen <- as.integer(script_args$max_fraglen) %||% Inf
     frag <-
-      frag[between(width(frag), min_fraglen, max_fraglen)]
+      frag[between(GenomicRanges::width(frag), min_fraglen, max_fraglen)]
 
     frag
   }) %>% do.call(c, args = .)

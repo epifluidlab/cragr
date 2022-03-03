@@ -2,22 +2,6 @@
 
 # localrules: merge_ifs, signal_level
 
-# >>> Configuration >>>
-FULL_CORES = config.get("FULL_CORES", 16)
-PART_CORES = config.get("PART_CORES", 4)
-MEM_PER_CORE = config.get("MEM_PER_CORE", 1800)
-WALL_TIME_MAX = config.get("WALL_TIME_MAX", 2880)
-CPU_FACTOR = float(config.get("CPU_FACTOR", 1))
-
-WALL_TIME_MAX = 2880
-MEM_PER_CORE = 1800
-
-
-FDR_NB = config.get("FDR_NB", 0.25)
-FDR_POIS = config.get("FDR_POIS", 0.01)
-GC_CORRECT = config.get("GC_CORRECT", "TRUE")
-# <<< Configuration <<<
-
 def find_main_script():
     import subprocess
 
@@ -32,6 +16,24 @@ def find_main_script():
         text=True,
         check=True,
     ).stdout
+
+
+# >>> Configuration >>>
+FULL_CORES = config.get("FULL_CORES", 16)
+PART_CORES = config.get("PART_CORES", 4)
+MEM_PER_CORE = config.get("MEM_PER_CORE", 1800)
+WALL_TIME_MAX = config.get("WALL_TIME_MAX", 2880)
+CPU_FACTOR = float(config.get("CPU_FACTOR", 1))
+
+WALL_TIME_MAX = 2880
+MEM_PER_CORE = 1800
+
+FDR_NB = config.get("FDR_NB", 0.25)
+FDR_POIS = config.get("FDR_POIS", 0.01)
+GC_CORRECT = config.get("GC_CORRECT", "TRUE")
+
+MAIN_SCRIPT = config.get("MAIN_SCRIPT", find_main_script())
+# <<< Configuration <<<
 
 
 def stage_ifs_cores(chrom, file_path, single_chrom=False):
@@ -88,8 +90,8 @@ rule stage_ifs:
         ifs=temp("temp/{sid}.ifs.raw.chr{chrom}.bed.gz")
     log: "log/{sid}.chr{chrom}.stage_ifs.log"
     params:
-        label=lambda wildcards: f"cragr.stage_ifs.{wildcards.sid}.chr{wildcards.chrom}",
-        main_script=lambda wildcards: find_main_script(),
+        slurm_job_label=lambda wildcards: f"cragr.stage_ifs.{wildcards.sid}.chr{wildcards.chrom}",
+        main_script=lambda wildcards: MAIN_SCRIPT,
     threads: lambda wildcards, input, attempt: int(CPU_FACTOR * stage_ifs_cores(wildcards.chrom, input.frag) * (0.5 + 0.5 * attempt))
     resources:
         mem_mb=lambda wildcards, threads: threads * MEM_PER_CORE,
@@ -103,7 +105,9 @@ rule stage_ifs:
         Rscript {params.main_script} ifs \
         -i {input.frag} \
         -o "$tmpdir"/output.bed.gz \
-        --gc-correct TRUE \
+        --gc-correct \
+        --genome GRCh37 \
+        --exclude-region encode.blacklist.hs37-1kg \
         -m {input.mappability} \
         --chrom {wildcards.chrom} \
         --verbose 2>&1 | tee {log}
@@ -121,8 +125,8 @@ rule stage_peak:
         ifs=temp("temp/{sid}.ifs.{gc_type}.chr{chrom}.bedGraph.gz"),
     log: "log/{sid}.{gc_type}.chr{chrom}.stage_peak.log"
     params:
-        label=lambda wildcards: f"cragr.stage_peak.{wildcards.sid}.{wildcards.gc_type}.chr{wildcards.chrom}",
-        main_script=lambda wildcards: find_main_script(),
+        slurm_job_label=lambda wildcards: f"cragr.stage_peak.{wildcards.sid}.{wildcards.gc_type}.chr{wildcards.chrom}",
+        main_script=lambda wildcards: MAIN_SCRIPT,
     threads: lambda wildcards, input, attempt: int(CPU_FACTOR * stage_peak_cores(wildcards.chrom) * (0.5 + 0.5 * attempt))
     resources:
         mem_mb=lambda wildcards, threads: threads * MEM_PER_CORE,
@@ -143,7 +147,9 @@ rule stage_peak:
         Rscript {params.main_script} peak \
         -i {input.ifs} \
         -o "$tmpdir"/ifs.bedGraph.gz \
-        --gc-correct $gc_correct \
+        --gc-correct \
+        --genome GRCh37 \
+        --exclude-region encode.blacklist.hs37-1kg \
         -m {input.mappability} \
         --chrom {wildcards.chrom} \
         --verbose 2>&1 | tee {log}
@@ -166,7 +172,7 @@ rule merge_ifs:
         time_min=300,
         attempt=lambda wildcards, threads, attempt: attempt
     params:
-        label=lambda wildcards: f"cragr.merge_ifs.{wildcards.sid}.{wildcards.gc_type}",
+        slurm_job_label=lambda wildcards: f"cragr.merge_ifs.{wildcards.sid}.{wildcards.gc_type}",
     shell:
         """
         set +u; if [ -z $LOCAL ] || [ -z $SLURM_CLUSTER_NAME ]; then tmpdir=$(mktemp -d); else tmpdir=$(mktemp -d -p $LOCAL); fi; set -u
@@ -208,7 +214,7 @@ rule ifs_bigwig:
         time_min=300,
         attempt=lambda wildcards, threads, attempt: attempt
     params:
-        label=lambda wildcards: f"cragr.ifs_bigwig.{wildcards.sid}.{wildcards.gc_type}",
+        slurm_job_label=lambda wildcards: f"cragr.ifs_bigwig.{wildcards.sid}.{wildcards.gc_type}",
     shell:
         """
         set +u; if [ -z $LOCAL ] || [ -z $SLURM_CLUSTER_NAME ]; then tmpdir=$(mktemp -d); else tmpdir=$(mktemp -d -p $LOCAL); fi; set -u
@@ -227,6 +233,7 @@ rule ifs_bigwig:
         """
 
 
+# Dried IFS files: only keep regions whether the adjusted p-values are less than 0.75
 rule ifs_dried:
     input: "result/{sid}.ifs.{gc_type}.bedGraph.gz",
     output:
@@ -239,12 +246,12 @@ rule ifs_dried:
         time_min=300,
         attempt=lambda wildcards, threads, attempt: attempt
     params:
-        label=lambda wildcards: f"cragr.ifs_dried.{wildcards.sid}.{wildcards.gc_type}",
+        slurm_job_label=lambda wildcards: f"cragr.ifs_dried.{wildcards.sid}.{wildcards.gc_type}",
     shell:
         """
         set +u; if [ -z $LOCAL ] || [ -z $SLURM_CLUSTER_NAME ]; then tmpdir=$(mktemp -d); else tmpdir=$(mktemp -d -p $LOCAL); fi; set -u
 
-        zcat {input} | bioawk -t 'substr($0,1,1)=="#" || ($16!="." && $16<=0.75)' | bgzip > $tmpdir/output.bedGraph.gz
+        zcat {input} | bioawk -t 'substr($0,1,1)=="#" || ($16!="." && $16<=0.75) || ($10!="." && $10<=0.75)' | bgzip > $tmpdir/output.bedGraph.gz
         tabix -p bed $tmpdir/output.bedGraph.gz
 
         mv $tmpdir/output.bedGraph.gz {output.ifs}.tmp
@@ -271,7 +278,7 @@ rule call_hotspot:
         time_min=300,
         attempt=lambda wildcards, threads, attempt: attempt
     params:
-        label=lambda wildcards: f"cragr.hotspot.{wildcards.sid}",
+        slurm_job_label=lambda wildcards: f"cragr.hotspot.{wildcards.sid}",
     shell:
         """
         set +u; if [ -z $LOCAL ] || [ -z $SLURM_CLUSTER_NAME ]; then tmpdir=$(mktemp -d); else tmpdir=$(mktemp -d -p $LOCAL); fi; set -u
@@ -306,8 +313,8 @@ rule signal_level:
         "result/{sid}.hotspot.{hotspot}.{signal}.tsv"
     log: "log/{sid}.hotspot.{hotspot}.{signal}.log"
     params:
-        label=lambda wildcards: f"cragr.{wildcards.sid}.{wildcards.hotspot}.{wildcards.signal}",
-        main_script=lambda wildcards: find_main_script(),
+        slurm_job_label=lambda wildcards: f"cragr.{wildcards.sid}.{wildcards.hotspot}.{wildcards.signal}",
+        main_script=lambda wildcards: MAIN_SCRIPT,
     shell:
         """
         Rscript {params.main_script} signal \
