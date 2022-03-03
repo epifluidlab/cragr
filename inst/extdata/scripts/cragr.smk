@@ -2,22 +2,6 @@
 
 # localrules: merge_ifs, signal_level
 
-def find_main_script():
-    import subprocess
-
-    return subprocess.run(
-        [
-            "Rscript",
-            "-e",
-            'cat(paste0(system.file("extdata/scripts/cragr.R", package = "cragr")))',
-        ],
-        capture_output=True,
-        shell=False,
-        text=True,
-        check=True,
-    ).stdout
-
-
 # >>> Configuration >>>
 FULL_CORES = config.get("FULL_CORES", 16)
 PART_CORES = config.get("PART_CORES", 4)
@@ -32,7 +16,9 @@ FDR_NB = config.get("FDR_NB", 0.25)
 FDR_POIS = config.get("FDR_POIS", 0.01)
 GC_CORRECT = config.get("GC_CORRECT", "TRUE")
 
-MAIN_SCRIPT = config.get("MAIN_SCRIPT", find_main_script())
+SCRIPT_PATH = config.get("SCRIPT_PATH", ".") 
+DISABLE_PARALLEL = bool(config.get("DISABLE_PARALLEL", 0))
+R = config.get("R", "Rscript")
 # <<< Configuration <<<
 
 
@@ -91,7 +77,6 @@ rule stage_ifs:
     log: "log/{sid}.chr{chrom}.stage_ifs.log"
     params:
         slurm_job_label=lambda wildcards: f"cragr.stage_ifs.{wildcards.sid}.chr{wildcards.chrom}",
-        main_script=lambda wildcards: MAIN_SCRIPT,
     threads: lambda wildcards, input, attempt: int(CPU_FACTOR * stage_ifs_cores(wildcards.chrom, input.frag) * (0.5 + 0.5 * attempt))
     resources:
         mem_mb=lambda wildcards, threads: threads * MEM_PER_CORE,
@@ -102,7 +87,9 @@ rule stage_ifs:
         """
         set +u; if [ -z $LOCAL ] || [ -z $SLURM_CLUSTER_NAME ]; then tmpdir=$(mktemp -d); else tmpdir=$(mktemp -d -p $LOCAL); fi; set -u
 
-        Rscript {params.main_script} ifs \
+        {R} -e 'sessionInfo()'
+
+        {R} {SCRIPT_PATH}/cragr.R ifs \
         -i {input.frag} \
         -o "$tmpdir"/output.bed.gz \
         --gc-correct \
@@ -126,7 +113,6 @@ rule stage_peak:
     log: "log/{sid}.{gc_type}.chr{chrom}.stage_peak.log"
     params:
         slurm_job_label=lambda wildcards: f"cragr.stage_peak.{wildcards.sid}.{wildcards.gc_type}.chr{wildcards.chrom}",
-        main_script=lambda wildcards: MAIN_SCRIPT,
     threads: lambda wildcards, input, attempt: int(CPU_FACTOR * stage_peak_cores(wildcards.chrom) * (0.5 + 0.5 * attempt))
     resources:
         mem_mb=lambda wildcards, threads: threads * MEM_PER_CORE,
@@ -144,7 +130,9 @@ rule stage_peak:
             gc_correct=FALSE
         fi
 
-        Rscript {params.main_script} peak \
+        {R} -e 'sessionInfo()'
+
+        {R} {SCRIPT_PATH}/cragr.R peak \
         -i {input.ifs} \
         -o "$tmpdir"/ifs.bedGraph.gz \
         --gc-correct \
@@ -304,22 +292,21 @@ rule call_hotspot:
         """
 
 
-rule signal_level:
-    input:
-        hotspot="result/{sid}.hotspot.{hotspot}.bed.gz",
-        signal="data/roadmap/{signal}.pval.signal.bedGraph.gz",
-        signal_tbi="data/roadmap/{signal}.pval.signal.bedGraph.gz.tbi",
-    output:
-        "result/{sid}.hotspot.{hotspot}.{signal}.tsv"
-    log: "log/{sid}.hotspot.{hotspot}.{signal}.log"
-    params:
-        slurm_job_label=lambda wildcards: f"cragr.{wildcards.sid}.{wildcards.hotspot}.{wildcards.signal}",
-        main_script=lambda wildcards: MAIN_SCRIPT,
-    shell:
-        """
-        Rscript {params.main_script} signal \
-        -i {input.hotspot} \
-        --signal {input.signal} \
-        --output {output} \
-        --verbose 2>&1 | tee {log}
-        """
+# rule signal_level:
+#     input:
+#         hotspot="result/{sid}.hotspot.{hotspot}.bed.gz",
+#         signal="data/roadmap/{signal}.pval.signal.bedGraph.gz",
+#         signal_tbi="data/roadmap/{signal}.pval.signal.bedGraph.gz.tbi",
+#     output:
+#         "result/{sid}.hotspot.{hotspot}.{signal}.tsv"
+#     log: "log/{sid}.hotspot.{hotspot}.{signal}.log"
+#     params:
+#         slurm_job_label=lambda wildcards: f"cragr.{wildcards.sid}.{wildcards.hotspot}.{wildcards.signal}",
+#     shell:
+#         """
+#         Rscript {params.main_script} signal \
+#         -i {input.hotspot} \
+#         --signal {input.signal} \
+#         --output {output} \
+#         --verbose 2>&1 | tee {log}
+#         """
