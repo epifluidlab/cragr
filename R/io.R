@@ -25,12 +25,9 @@ read_fragments <- function(file_path, range = NULL, genome = NULL) {
       logging::logwarn("Cannot find mapq in the data frame")
   }
 
-  if (mapq_guessed) {
-    # Only need mapq. Drop other columns
-    mcols(frag) <- frag_metadata["mapq"]
-  } else {
-    mcols(frag) <- NULL
-  }
+  # Only keep necessary columns
+  meta_cols <- base::intersect(names(frag_metadata), c("mapq", "cigar1", "cigar2"))
+  mcols(frag) <- frag_metadata[meta_cols]
 
   GenomicRanges::strand(frag) <- "*"
   print(frag)

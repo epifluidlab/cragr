@@ -141,7 +141,7 @@ parse_script_args <- function() {
       walk(function(arg) {
         if (!is.null(script_args[[arg]])) {
           script_args[[arg]] <<-
-            str_split(script_args[[arg]], pattern = ":")[[1]]
+            str_split(script_args[[arg]], pattern = "[:,]")[[1]]
         }
       })
 
@@ -278,17 +278,24 @@ subcommand_ifs <- function(script_args) {
       }
     }
 
-    # Apply filters
-    min_mapq <- as.integer(script_args$min_mapq)
-    if (isTRUE(min_mapq > 0) && "mapq" %in% colnames(GenomicRanges::mcols(frag))) {
-      frag <- frag[frag$mapq >= min_mapq]
-    }
-
-    logging::loginfo("Applying fragment length filter ...")
-    min_fraglen <- as.integer(script_args$min_fraglen) %||% 0
-    max_fraglen <- as.integer(script_args$max_fraglen) %||% Inf
-    frag <-
-      frag[between(GenomicRanges::width(frag), min_fraglen, max_fraglen)]
+    # # Apply filters
+    # min_mapq <- as.integer(script_args$min_mapq)
+    # if (isTRUE(min_mapq > 0) && "mapq" %in% colnames(GenomicRanges::mcols(frag))) {
+    #   frag <- frag[frag$mapq >= min_mapq]
+    # }
+    #
+    # logging::loginfo("Applying fragment length filter ...")
+    # min_fraglen <- as.integer(script_args$min_fraglen) %||% 0
+    # max_fraglen <- as.integer(script_args$max_fraglen) %||% Inf
+    # frag <-
+    #   frag[between(GenomicRanges::width(frag), min_fraglen, max_fraglen)]
+    #
+    # if (script_args$exclude_soft_clipping &&
+    #     all(c("cigar1", "cigar2") %in% colnames(GenomicRanges::mcols(frag)))) {
+    #   logging::loginfo("Applying fragment CIGAR filter ...")
+    #   frag <- frag[!grepl(pattern = "^[0-9]+S", x = frag$cigar1) &
+    #                  !grepl(pattern = "[0-9]+S$", x = frag$cigar2)]
+    # }
 
     frag
   }) %>% do.call(c, args = .)

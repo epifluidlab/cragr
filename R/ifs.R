@@ -11,33 +11,34 @@ preprocess_fragment <-
            exclude_soft_clipping,
            blacklist_region) {
     stopifnot(length(chrom) == 1)
-    
+
     fragment_data <-
       keepSeqlevels(fragment_data, chrom, pruning.mode = "coarse")
-    
+
     # Apply filters
     logging::loginfo("Applying MAPQ filter ...")
     if (min_mapq > 0 && "mapq" %in% colnames(mcols(fragment_data))) {
       fragment_data <- fragment_data[fragment_data$mapq >= min_mapq]
     }
     logging::loginfo(str_interp("${length(fragment_data)} fragments have passed filter"))
-    
+
     logging::loginfo("Applying fragment length filter ...")
     min_fraglen <- min_fraglen %||% 0
     max_fraglen <- max_fraglen %||% Inf
     fragment_data <-
       fragment_data[between(width(fragment_data), min_fraglen, max_fraglen)]
     logging::loginfo(str_interp("${length(fragment_data)} fragments have passed filter"))
-    
-    
+
+
     if (exclude_soft_clipping &&
-      all(c("cigar1", "cigar2") %in% colnames(mcols(fragment_data)))) {
+        all(c("cigar1", "cigar2") %in% colnames(mcols(fragment_data)))) {
       logging::loginfo("Removing soft-clipping fragments ...")
       fragment_data <-
-        fragment_data[!str_detect(fragment_data$cigar1, "^[0-9]+S") &
-                        !str_detect(fragment_data$cigar2, "[0-9]+S$")]
+        fragment_data[!grepl(pattern = "^[0-9]+S", x = fragment_data$cigar1) &
+                        !grepl(pattern = "[0-9]+S$", x = fragment_data$cigar2)]
+      logging::loginfo(str_interp("${length(fragment_data)} fragments have passed filter"))
     }
-    
+
     # Exclude fragments from certain regions
     if (!is.null(blacklist_region)) {
       excluded_regions <-
@@ -80,7 +81,7 @@ preprocess_fragment <-
       }
     }
     logging::loginfo(str_interp("${length(fragment_data)} fragments have passed filter"))
-    
+
     fragment_data
   }
 
@@ -90,12 +91,12 @@ calculate_raw_ifs <-
   function(fragment_data, window_size, step_size) {
     # Get coverage and calcuate IFS score for each 20bp (step-size) window
     logging::loginfo("Calculating raw IFS scores ...")
-    
+
     # Here we need do grouping and aggregating.
     # It seems data.table is way faster
     fragment_data$window_id <-
       (start(fragment_data) - 1) %/% step_size
-    
+
     fragment_data <- bedtorch::as.bedtorch_table(fragment_data)
     avg_len <- mean(fragment_data$length)
     ifs <- fragment_data[,
@@ -103,11 +104,20 @@ calculate_raw_ifs <-
         chrom = chrom[1],
         start = as.integer(window_id * step_size),
         end = as.integer((window_id + 1) * step_size),
-        score = .N + sum(length, na.rm = TRUE) / avg_len,
+        # score = .N + sum(length, na.rm = TRUE) / avg_len,
+        sum_len = sum(length, na.rm = TRUE),
         cov = as.integer(.N)
       ),
       by = window_id
     ][, window_id := NULL]
+    ifs <-
+      ifs[, .(chrom,
+              start,
+              end,
+              score = cov + sum_len / avg_len,
+              cov,
+              frag_len = sum_len / cov)]
+
     ifs %<>% bedtorch::as.bedtorch_table(genome = attr(fragment_data, "genome"))
     data.table::setkeyv(ifs, c("chrom", "start", "end"))
 
@@ -117,7 +127,8 @@ calculate_raw_ifs <-
     ifs <-
       slide_window(ifs,
                    window_size = window_size,
-                   step_size = step_size
+                   step_size = step_size,
+                   avg_len = avg_len
       )
 
     # ifs[, avg_len := avg_len]
@@ -171,7 +182,7 @@ ifs_score <-
     stopifnot(is(fragment_data, "GRanges"))
     assertthat::are_equal(window_size %% step_size, 0)
     assertthat::assert_that(!is.null(high_mappability_region))
-    
+
     if (is.null(chrom)) {
       chrom <- as.character(unique(seqnames(fragment_data)))
     } else {
@@ -212,7 +223,7 @@ ifs_score <-
         exclude_soft_clipping = exclude_soft_clipping,
         blacklist_region = blacklist_region
       )
-    
+
     log_mem("Done preprocessing fragment")
 
     avg_len <- mean(fragment_data$length)
@@ -223,9 +234,9 @@ ifs_score <-
                         step_size = step_size
       )
     ifs <- bedtorch::as.GenomicRanges(ifs)
-    
+
     log_mem("Done calculating raw IFS")
-    
+
     # Exclude low-mappability regions
     logging::loginfo("Excluding low mappability regions ...")
     if (!is_null(high_mappability_region)) {
@@ -237,13 +248,13 @@ ifs_score <-
           keepSeqlevels(high_mappability_region, chrom, pruning.mode = "coarse")
       }
       log_mem("Done loading high mappability regions")
-      
+
       # Intervals in ifs and high_mappability_region should be exactly matched (200bp window)
       ifs <-
         ifs[queryHits(findOverlaps(ifs, high_mappability_region, type = "equal"))]
       rm(high_mappability_region)
     }
-    
+
     log_mem("Done mappability filtering")
 
     return(list(ifs = ifs, avg_len = avg_len, frag_cnt = frag_cnt))
@@ -270,12 +281,12 @@ ifs_score <-
 #' @export
 calc_ifs_z_score <- function(ifs) {
   assertthat::are_equal(length(unique(seqnames(ifs))), 1)
-  
+
   score <- exclude_outlier(ifs$score)
   score_mean <- mean(score)
   score_sd <- sd(score)
   ifs$z_score <- (ifs$score - score_mean) / score_sd
-  
+
   ifs
 }
 
@@ -303,17 +314,18 @@ calc_gc <- function(ifs) {
   seqinfo(ifs) <- seqinfo(bsgenome)
 
   genome_seq <- BSgenome::getSeq(bsgenome, ifs)
-  gc <- Biostrings::letterFrequency(genome_seq, letters = "CG", as.prob = TRUE)[, 1]
+  gc <- Biostrings::letterFrequency(genome_seq, letters = "CG")[, 1]
+  fourbases <- Biostrings::letterFrequency(genome_seq, letters = "ATCG")[, 1]
+  gc <- gc / fourbases
 
   # Discard a bin if it contains too many Ns
-  mask_threshold <- 0.01
+  mask_threshold <- 0.05
   base_masked <- Biostrings::letterFrequency(genome_seq, letters = "N", as.prob = TRUE)[, 1] > mask_threshold
   gc[base_masked] <- NA
 
   ifs$gc <- gc
   return(ifs)
 }
-
 
 #' Perform GC-correction for IFS scores
 #'
@@ -328,9 +340,9 @@ gc_correct <-
            max_training_dataset = 2e6L) {
     assertthat::are_equal(length(unique(seqnames(ifs))), 1)
     assertthat::assert_that("gc" %in% colnames(mcols(ifs)))
-    
+
     ifs$score0 <- ifs$score
-    
+
     # Use all points
     if (length(ifs) > max_training_dataset) {
       logging::loginfo(
@@ -341,7 +353,7 @@ gc_correct <-
     } else {
       logging::loginfo(str_interp("Training using LOESS mode, total n = ${length(ifs)}"))
     }
-    
+
     # Exclude outliers from the training dataset
     outlier_flag <- exclude_outlier(ifs$score0, mark = TRUE)
     train_data <-
@@ -359,15 +371,15 @@ gc_correct <-
         )
       )
     rm(train_data)
-    
+
     logging::loginfo("Finished training")
     log_mem("Done GC training")
-    
+
     logging::loginfo("Applying the model for GC correction ...")
     ifs$score <-
       ifs$score0 - predict(model, newdata = ifs$gc) + mean(ifs$score0)
     ifs$score <- ifelse(ifs$score < 0, 0, ifs$score)
-    
+
     # In rare cases, GC-corrected scores can be NA. Don't know why.
     # Here we drop out any of those
     na_score_idx <- is.na(ifs$score)
@@ -388,13 +400,13 @@ gc_correct <-
 # The result is a collection of overlapping `window_size` bins.
 # @param window_size Width of the sliding window. Must be multiples of `step_size`.
 # @param step_size Incremental steps of the sliding window.
-slide_window <- function(ifs, window_size, step_size) {
+slide_window <- function(ifs, window_size, step_size, avg_len) {
   assertthat::are_equal(window_size %% step_size, 0)
   assertthat::are_equal(length(unique(ifs$chrom)), 1)
-  
+
   genome <- attr(ifs, "genome")
   stopifnot(is.character(genome) || length(genome) == 1)
-  
+
   chrom_sizes <- bedtorch::get_seqinfo(genome)
   chrom_sizes <-
     data.table(
@@ -404,11 +416,11 @@ slide_window <- function(ifs, window_size, step_size) {
     ) %>%
     bedtorch::as.bedtorch_table(genome = genome)
   chrom_sizes[, size := end - start]
-  
+
   n <- window_size %/% step_size
-  
+
   # Construct a continuous IFS score track, with filled 0s.
-  
+
   scaffold <-
     data.table::data.table(chrom = ifs$chrom[1])[chrom_sizes, nomatch = 0, on = "chrom"]
   scaffold <- scaffold[, {
@@ -417,12 +429,12 @@ slide_window <- function(ifs, window_size, step_size) {
     end <- as.integer((gid + 1) * step_size)
     list(chrom, start, end)
   }]
-  
+
   data.table::setkey(scaffold, "chrom", "start", "end")
   ifs <-
     ifs[scaffold][is.na(score), score := 0][is.na(cov), cov := 0]
   rm(scaffold)
-  
+
   ifs <- ifs[, `:=`(
     end = as.integer(start + window_size),
     score = rollsum(
@@ -438,10 +450,12 @@ slide_window <- function(ifs, window_size, step_size) {
       align = "left"
     ))
   )][!is.na(score) & !is.na(cov)]
-  
+  ifs <- ifs[cov > 0]
+  ifs[, frag_len := (score - cov) / cov * avg_len]
+
   # Eliminate float-point errors
   ifs[abs(score) < 1e-9, score := 0]
-  
+
   data.table::setkey(ifs, "chrom", "start", "end")
   bedtorch::as.bedtorch_table(ifs, genome = genome)
 }
@@ -460,14 +474,15 @@ build_exclude_region <-
     if (is.null(blacklist_region)) {
       return(NULL)
     }
-    
+
     if (is.list(blacklist_region)) {
       blacklist_region <- do.call(c, args = blacklist_region)
     } else if (is_character(blacklist_region)) {
       blacklist_region %<>%
         map(function(region) {
           if (file.exists(region)) {
-            bedtorch::read_bed(region, range = chrom)
+            gr <- bedtorch::read_bed(region)
+            gr[GenomicRanges::seqnames(gr) == chrom]
           } else if (region == "encode.blacklist.hs37-1kg") {
             bedtorch::read_bed(
               system.file(
@@ -482,7 +497,7 @@ build_exclude_region <-
         }) %>%
         do.call(c, args = .)
     }
-    
+
     bedtorch::merge_bed(blacklist_region)
   }
 
@@ -492,7 +507,7 @@ build_exclude_region <-
   lut_factor <- NULL
   res <- 3
   res_lambda <- 2
-  
+
   # Calculate the normalization factors
   calc_factor <- function(lambda) {
     results <- rep(1, length(lambda))
@@ -510,15 +525,15 @@ build_exclude_region <-
       })
     results
   }
-  
+
   function(x, lambda) {
     if (length(x) != 1 && length(lambda) != 1) {
       assertthat::are_equal(length(x), length(lambda))
     }
-    
+
     x <- round(x, digits = res)
     lambda <- round(lambda, digits = res_lambda)
-    
+
     # Update LUT factor and calculate factors as needed
     if (is_null(lut_factor)) {
       lut_factor <<-
@@ -532,7 +547,7 @@ build_exclude_region <-
       # For lambda values that don't have factors associated yet
       lut_factor[is.na(factor), factor := calc_factor(lambda)]
     }
-    
+
     # Upate LUT
     if (is_null(lut)) {
       lut <<-
@@ -543,19 +558,19 @@ build_exclude_region <-
         ))[lambda == 0]
       data.table::setkey(lut, "lambda", "x")
     }
-    
+
     dt <- data.table::as.data.table(list(lambda = lambda, x = x))
     data.table::setkey(dt, "lambda", "x")
-    
+
     dt <- dt[lut_factor, nomatch = 0]
     # All factors have been calculated
     assertthat::assert_that(!any(is.na(dt$factor)))
     dt <- lut[dt]
-    
+
     dcpois <- function(x, lambda, factor) {
       factor * exp(x * log(lambda) - lambda - lgamma(x + 1))
     }
-    
+
     # Calculate probabilities as needed
     dt <- unique(dt)[is.na(p),
                      p := {
@@ -578,10 +593,10 @@ build_exclude_region <-
                      },
                      by = lambda
     ][, .(lambda, x, p)]
-    
+
     full_lut <-
       merge(dt, lut, all = TRUE)[, p := ifelse(is.na(p.y), p.x, p.y)][, .(lambda, x, p)]
-    
+
     results <-
       merge(
         data.table::as.data.table(list(lambda = lambda, x = x)),
@@ -590,7 +605,7 @@ build_exclude_region <-
         all.x = TRUE,
         sort = FALSE
       )$p
-    
+
     lut <<- full_lut[!is.na(x) & x > 0]
     results
   }
@@ -602,18 +617,18 @@ pcpois <- .build_pcpois()
 # @param mark if TRUE, return a logical vector indicating positions of outliers
 exclude_outlier <- function(x, mark = FALSE, threshold = 5) {
   n1 <- sum(!is.na(x))
-  
+
   if (n1 < 10) {
     if (mark)
       return(rep(FALSE, length(x)))
     else
       return(x)
   }
-  
+
   mad_x <- mad(x, na.rm = TRUE)
   outlier_flag <- !is.na(x) & (abs(x - median(x, na.rm = TRUE)) >= threshold * mad_x)
   n2 <- sum(!is.na(x) & !outlier_flag)
-  
+
   if (n2 / n1 < 0.9) {
     logging::logwarn(str_interp("Tentative outlier exclusion: #${n1} -> #${n2}. Pass rate: ${n2/n1}"))
     if (mark)
@@ -621,7 +636,7 @@ exclude_outlier <- function(x, mark = FALSE, threshold = 5) {
     else
       return(x)
   }
-  
+
   if (mark)
     return(outlier_flag)
   else
@@ -641,13 +656,13 @@ calc_pois_pval <- function(ifs,
   assertthat::assert_that(!cpois)
   # model <- match.arg(model)
   # model <- c("poisson", "negbinom")
-  
+
   # Calculate p-values using Poisson model
   pval_ppois <- function(x) {
     x_no_outlier <- exclude_outlier(x)
     stats::ppois(x, lambda = mean(x_no_outlier))
   }
-  
+
   # Calculate p-values using negative binomial model
   pval_pnbinom <- function(x) {
     x_no_outlier <- exclude_outlier(x)
@@ -656,7 +671,7 @@ calc_pois_pval <- function(ifs,
       (mean(x_no_outlier) ** 2) / var(x_no_outlier) / (1 - prob)
     stats::pnbinom(x, size = size, prob = prob)
   }
-  
+
   # Standard Poisson model
   grl <- GenomicRanges::split(ifs, seqnames(ifs))
   log_mem("Done spliting IFS data frame")
@@ -664,7 +679,7 @@ calc_pois_pval <- function(ifs,
     lapply(function(gr) {
       if (length(gr) == 0)
         return(gr)
-      
+
       # Poisson-based global p-values
       gr$pval_pois <- pval_ppois(gr$score)
       # Poisson-based global p-values with FDR correction
@@ -691,16 +706,16 @@ calc_pois_pval_local <-
            cpois = FALSE) {
     assertthat::are_equal(window_size %% step_size, 0)
     assertthat::assert_that(all(unlist(local_layout) %% step_size == 0))
-    
+
     # Use data.table for the calculation
     seqinfo_original <- seqinfo(ifs)
     # Must have seqinfo
     assertthat::assert_that(all(!is.na(GenomeInfoDb::genome(seqinfo_original))))
-    
+
     ifs <- bedtorch::as.bedtorch_table(ifs)
     # Mark outliers for each chromosome
     ifs[, is_outlier := exclude_outlier(score, mark = TRUE), by = chrom]
-    
+
     # Construct a continuous IFS score track, with filled 0s.
     scaffold <-
       ifs[, .(start = seq(min(start), max(start), by = step_size)), by = chrom][, end := start + window_size]
@@ -709,7 +724,7 @@ calc_pois_pval_local <-
     ifs_expanded <- ifs[scaffold]
     rm(scaffold)
     log_mem("Done expanding IFS data frame")
-    
+
     # for (local_suffix in names(local_layout)) {
     #   local_width <- local_layout[[local_suffix]]
     #
@@ -721,23 +736,23 @@ calc_pois_pval_local <-
                      # Because we just expanded the IFS data table, some rows will contain
                      # NA scores
                      valid_score_idx <- !is.na(score)
-                     
+
                      # Used for var calculation
                      score_sq <- score ** 2
-                     
+
                      results <-
                        names(local_layout) %>% map(function(local_suffix) {
                          # local_suffix: for example: _5k
                          # local_width: 5000L, or 10000L, for example
                          local_width <- local_layout[[local_suffix]]
-                         
+
                          # Outer rim: center -       outer_shift -> center -> center      +       outer_shift
                          # Inner rim:       center - inner_shift -> center -> center + inner_shift
                          #
                          # Only use outer_rim - inner_rim to determin the background
                          outer_shift <- as.integer(local_width / step_size / 2)
                          inner_shift <- as.integer(window_size / step_size)
-                         
+
                          # local_width: may be 5000L or 10000L
                          # Local means over the 5k/10k region
                          outer_sum <- bedtorch::rollsum(
@@ -768,7 +783,7 @@ calc_pois_pval_local <-
                            align = "center",
                            na.rm = TRUE
                          )
-                         
+
                          # How many valid 200-bp windows in the 5k/10 rolling region?
                          # Valid: sore is non-NA, is_outlier is FALSE
                          outer_count <- bedtorch::rollsum(
@@ -784,7 +799,7 @@ calc_pois_pval_local <-
                            align = "center"
                          )
                          valid_count <- outer_count - inner_count
-                         
+
                          score_rollmean <-
                            ifelse(!is.na(valid_count) &
                                     valid_count > 1,
@@ -792,15 +807,15 @@ calc_pois_pval_local <-
                                   NA
                            )
                          score_rollmean[score_rollmean < 0] <- 0
-                         
+
                          score_sq_rollmean <-
                            ifelse(!is.na(valid_count) &
                                     valid_count > 1,
                                   (outer_sum_sq - inner_sum_sq) / valid_count, NA)
                          score_sq_rollmean[score_sq_rollmean < 0] <- 0
                          score_rollvar <- valid_count/(valid_count - 1) * (score_sq_rollmean - score_rollmean**2)
-                         
-                         
+
+
                          # After calculating rollmean and valid_count, we can safely remove
                          # rows with NA scores, which are dummy rows only for rolling
                          # purposes
@@ -810,22 +825,22 @@ calc_pois_pval_local <-
                            score_rollvar[valid_score_idx]
                          valid_count <- valid_count[valid_score_idx]
                          score <- score[valid_score_idx]
-                         
+
                          # Only consider regions with sufficient ...
                          valid_roll_idx <-
                            !is.na(valid_count) &
                            (valid_count >= 30) &
                            !is.na(score_rollmean) &
                            !is.na(score_rollvar)
-                         
+
                          results <- list()
-                         
+
                          # Local pois p-values
                          v <- rep(NA, length(score_rollmean))
                          v[valid_roll_idx] <- ppois(score[valid_roll_idx],
                                                     lambda = score_rollmean[valid_roll_idx])
                          results[[paste0("pval_pois_", local_suffix)]] <- v
-                         
+
                          # Local NB p-values
                          v <- rep(NA, length(score_rollmean))
                          nbinom_mu <- score_rollmean[valid_roll_idx]
@@ -836,19 +851,19 @@ calc_pois_pval_local <-
                            NA,
                            nbinom_mu ** 2 / (nbinom_var - nbinom_mu)
                          )
-                         
+
                          v[valid_roll_idx] <- pnbinom(score[valid_roll_idx],
                                                       mu = nbinom_mu,
                                                       size = nbinom_size)
-                         
+
                          results[[paste0("pval_nbinom_", local_suffix)]] <- v
-                         
+
                          results[[paste0("mu_", local_suffix)]] <- score_rollmean
                          # results[[paste0("var_", local_suffix)]] <- score_rollvar
-                         
+
                          results
                        })
-                     
+
                      # Example:
                      #
                      # List of 8
@@ -873,22 +888,22 @@ calc_pois_pval_local <-
                    by = chrom
       ]
     data.table::setkey(local_peaks, "chrom", "start", "end")
-    
+
     ifs <- ifs[local_peaks]
-    
+
     ifs[, is_outlier := NULL]
-    
+
     # Aggregate all local pois p-values by taking the maximum
     # Example: pval_pois_5k, pval_pois_10k, ...
     pval_pois_local_cols <- paste0("pval_pois_", names(local_layout))
     v <- do.call(pmax, args = ifs[, ..pval_pois_local_cols])
     ifs[, pval_pois_local := v]
     ifs[, (pval_pois_local_cols) := NULL]
-    
+
     # Aggregate all NB p-values by taking the maximum
     # Example: pval_nbinom, pval_nbinom_5k, pval_nbinom_10k, ...
     pval_nb_cols <- c("pval_nbinom", paste0("pval_nbinom_", names(local_layout)))
-    
+
     # Here we only use local background p-values to calculate the results
     # pval_nb_cols <- paste0("pval_nbinom_", names(local_layout))
     v <- do.call(pmax, args = ifs[, ..pval_nb_cols])
@@ -897,14 +912,14 @@ calc_pois_pval_local <-
     # ifs[, (pval_nb_cols) := NULL]
     # # Remove global background p-values
     # ifs[, pval_nbinom := NULL]
-    
+
     ifs <- bedtorch::as.GenomicRanges(ifs)
-    
+
     levels_original <- seqlevels(seqinfo_original)
     levels_now <- seqlevels(ifs)
     seqinfo(ifs, new2old = match(levels_original, levels_now)) <-
       seqinfo_original
-    
+
     ifs
   }
 
@@ -918,13 +933,13 @@ call_hotspot <- function(
   method = c("pois", "nb")
 ) {
   method <- match.arg(method)
-  
+
   # Relocate column orders
   ifs_md <- mcols(ifs) %>%
     as_tibble() %>%
     relocate(z_score, 1)
   mcols(ifs) <- ifs_md
-  
+
   assertthat::assert_that(method %in% c("pois", "nb"))
   if (method == "pois") {
     # All local p-values (pval_pois_5k and alike) should be filtered
@@ -936,7 +951,7 @@ call_hotspot <- function(
       mutate(flag = if_all(starts_with("pval_pois_"),
                            ~ !is.na(.) & . <= local_pval_cutoff)) %>%
       .$flag
-    
+
     other_filter_result <- with(
       ifs_md,
       !is.na(pval_pois) &
@@ -944,7 +959,7 @@ call_hotspot <- function(
         !is.na(pval_pois_adjust) &
         pval_pois_adjust <= fdr_cutoff
     )
-    
+
     hotspot <- ifs[pval_local_filter_result & other_filter_result]
   } else if (method == "nb") {
     hotspot_idx <-
@@ -953,12 +968,12 @@ call_hotspot <- function(
   } else {
     stop()
   }
-  
+
   if (length(hotspot) == 0) {
     # hotspot is empty
     return(NULL)
   }
-  
+
   # mcols(hotspot) <- NULL
   hotspot
 }
