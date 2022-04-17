@@ -312,6 +312,11 @@ calc_gc <- function(ifs) {
   seqlevels(ifs) <- seqlevels(bsgenome)
   seqinfo(ifs) <- seqinfo(bsgenome)
 
+  # ifs may contain intervals out of the chromosome, make sure to exclude them
+  ifs <- GenomicRanges::trim(ifs)
+  common_width <- median(GenomicRanges::width(ifs))
+  ifs <- ifs[GenomicRanges::width(ifs) == common_width]
+
   genome_seq <- BSgenome::getSeq(bsgenome, ifs)
   gc <- Biostrings::letterFrequency(genome_seq, letters = "CG")[, 1]
   fourbases <- Biostrings::letterFrequency(genome_seq, letters = "ATCG")[, 1]
