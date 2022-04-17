@@ -181,7 +181,7 @@ ifs_score <-
            exclude_soft_clipping = FALSE) {
     stopifnot(is(fragment_data, "GRanges"))
     assertthat::are_equal(window_size %% step_size, 0)
-    assertthat::assert_that(!is.null(high_mappability_region))
+    # assertthat::assert_that(!is.null(high_mappability_region))
 
     if (is.null(chrom)) {
       chrom <- as.character(unique(seqnames(fragment_data)))
@@ -253,9 +253,8 @@ ifs_score <-
       ifs <-
         ifs[queryHits(findOverlaps(ifs, high_mappability_region, type = "equal"))]
       rm(high_mappability_region)
+      log_mem("Done mappability filtering")
     }
-
-    log_mem("Done mappability filtering")
 
     return(list(ifs = ifs, avg_len = avg_len, frag_cnt = frag_cnt))
   }
