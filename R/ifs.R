@@ -238,8 +238,8 @@ ifs_score <-
     log_mem("Done calculating raw IFS")
 
     # Exclude low-mappability regions
-    logging::loginfo("Excluding low mappability regions ...")
     if (!is_null(high_mappability_region)) {
+      logging::loginfo("Excluding low mappability regions ...")
       if (is.character(high_mappability_region)) {
         high_mappability_region <-
           bedtorch::read_bed(high_mappability_region, range = chrom)
@@ -337,31 +337,121 @@ calc_gc <- function(ifs) {
 #' @param max_training_dataset LOESS can be slow for a large dataset. If it
 #'   contains more data points than this parameter, we will sample a subset and
 #'   do the training.
+#' @param method If `standard`, the built-in `loess` function will be used for the calculation. If `caret`, will use `gamLOESS`
 #' @export
-gc_correct <-
+gc_correct <- function(ifs, span = 0.75, max_training_dataset = 1e6L, method = "standard", ...) {
+  if (method == "standard") {
+    return(gc_correct_standard(ifs, span, max_training_dataset, ...))
+  } else if (method == "caret") {
+    return(gc_correct_caret(ifs, span, max_training_dataset, ...))
+  } else {
+    stop(paste0("Unsupported method: ", method))
+  }
+}
+
+
+gc_correct_caret <-
   function(ifs,
            span = 0.75,
-           max_training_dataset = 2e6L) {
+           max_training_dataset = 1e6L,
+           thread = 1L,
+           ...) {
     assertthat::are_equal(length(unique(seqnames(ifs))), 1)
     assertthat::assert_that("gc" %in% colnames(mcols(ifs)))
-
+    
+    logging::loginfo("Performin GC correction through caret/gamLoess ...")
+    
     ifs$score0 <- ifs$score
-
+    
+    sel_idx <- 1:length(ifs)
+    # Exclude GC/score with NAs, otherwise the model training may fail
+    sel_idx <- sel_idx[!is.na(ifs$gc) & !is.na(ifs$score0)]
+    
     # Use all points
-    if (length(ifs) > max_training_dataset) {
+    if (length(sel_idx) > max_training_dataset) {
       logging::loginfo(
         str_interp(
-          "Training using LOESS mode, total n = ${length(ifs)}, subsample n = ${max_training_dataset}"
+          "Training using LOESS mode, total n = ${length(sel_idx)}, subsample n = ${max_training_dataset}"
         )
       )
+      sel_idx <- sample(sel_idx, size = max_training_dataset)
     } else {
-      logging::loginfo(str_interp("Training using LOESS mode, total n = ${length(ifs)}"))
+      logging::loginfo(str_interp("Training using LOESS mode, total n = ${length(sel_idx)}"))
+    }
+    
+    library(caret)
+    library(doParallel)
+    
+    # LOESS model ----
+    logging::loginfo("Building LOESS model ...")
+    
+    cl <- makeForkCluster(max(1, thread))
+    registerDoParallel(cl)
+    
+    model <- train(
+      x = data.frame(gc = ifs$gc[sel_idx]),
+      y = ifs$score0[sel_idx],
+      method = "gamLoess"
+    )
+    stopCluster(cl)
+    
+    logging::loginfo("Finished training")
+    gc()
+    log_mem("Done GC training")
+    
+    logging::loginfo("Applying the model for GC correction ...")
+    
+    # If GC is NA, model prediction may fail. Let's exclude them from the analysis
+    na_idx <- is.na(ifs$gc)
+    pred <- predict(model, newdata = data.frame(gc = ifs$gc[!na_idx]))
+    ifs$score <- NA
+    ifs$score[!na_idx] <-
+      pmax(0, ifs$score0[!na_idx] - pred + mean(ifs$score0, na.rm = TRUE))
+    
+    # In rare cases, GC-corrected scores can be NA. Don't know why.
+    # Here we drop out any of those
+    na_score_idx <- is.na(ifs$score)
+    if (any(na_score_idx)) {
+      logging::logwarn(str_interp("Excluded ${sum(na_score_idx)} records with NA scores"))
+      ifs <- ifs[!na_score_idx]
+    }
+    logging::loginfo("Finished performing GC correction")
+    ifs
+  }
+
+
+gc_correct_standard <-
+  function(ifs,
+           span = 0.75,
+           max_training_dataset = 1e6L,
+           ...) {
+    assertthat::are_equal(length(unique(seqnames(ifs))), 1)
+    assertthat::assert_that("gc" %in% colnames(mcols(ifs)))
+    
+    logging::loginfo("Performin GC correction through standard LOESS regression ...")
+
+    ifs$score0 <- ifs$score
+    sel_idx <- 1:length(ifs)
+
+    # Use all points
+    if (length(sel_idx) > max_training_dataset) {
+      logging::loginfo(
+        str_interp(
+          "Training using LOESS mode, total n = ${length(sel_idx)}, subsample n = ${max_training_dataset}"
+        )
+      )
+      sel_idx <- sample(sel_idx, size = max_training_dataset)
+    } else {
+      logging::loginfo(str_interp("Training using LOESS mode, total n = ${length(sel_idx)}"))
     }
 
+    # A subset of IFS for model training
+    ifs_train <- ifs[sel_idx]
+    
     # Exclude outliers from the training dataset
-    outlier_flag <- exclude_outlier(ifs$score0, mark = TRUE)
+    outlier_flag <- exclude_outlier(ifs_train$score0, mark = TRUE)
     train_data <-
-      data.table::data.table(gc = ifs$gc[!outlier_flag], score0 = ifs$score0[!outlier_flag]) %>%
+      data.table::data.table(gc = ifs_train$gc[!outlier_flag], score0 = ifs_train$score0[!outlier_flag]) %>%
       slice_sample(n = max_training_dataset)
     model <-
       loess(

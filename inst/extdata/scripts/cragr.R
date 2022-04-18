@@ -65,6 +65,11 @@ parse_script_args <- function() {
           help = "Methods used in GC correction. Should be either standard or caret [standard]"
         ),
         optparse::make_option(
+          c("--gc-correct-n"),
+          default = 1e6L,
+          help = "Maximal sample size for GC correction model training [1e6L]"
+        ),
+        optparse::make_option(
           c("-m", "--high-mappability"),
           type = "character",
           help = "Path to the mappability file. Default is NULL, i.e. do NOT exclude fragments from low-mappability regions"
@@ -105,9 +110,9 @@ parse_script_args <- function() {
         optparse::make_option(
           c("-w", "--window-size"),
           default = 200L,
-          help = "Size of the sliding window. Default is 200"
+          help = "Size of the sliding window [200]"
         ),
-        optparse::make_option(c("-s", "--step-size"), default = 20L, help = "Step size of the sliding window. Default is 20"),
+        optparse::make_option(c("-s", "--step-size"), default = 20L, help = "Step size of the sliding window [20]"),
         # optparse::make_option(
         #   c("--cpois"),
         #   action = "store_true",
@@ -120,6 +125,7 @@ parse_script_args <- function() {
         # optparse::make_option(c("--hotspot-method"), default = "pois"),
         optparse::make_option(c("--signal"), help = "The signal BED file"),
         optparse::make_option(c("--signal-hw"), default = 1000L),
+        optparse::make_option(c("-t", "--thread", default = 1L, help = "Number of threads [1]")),
         optparse::make_option(c("--verbose"), default = FALSE, action = "store_true")
       )
     )
@@ -358,7 +364,7 @@ subcommand_peak <- function(script_args) {
     bedtorch::read_bed(
       script_args$input,
       genome = script_args$genome,
-      col.names = c("chrom", "start", "end", "score", "cov", "gc")
+      col.names = c("chrom", "start", "end", "score", "cov", "fraglen", "gc")
     )
   
   logging::loginfo("Raw IFS summary:")
@@ -366,7 +372,14 @@ subcommand_peak <- function(script_args) {
   
   if (script_args$gc_correct) {
     logging::loginfo("Performing GC correction ...")
-    ifs <- gc_correct(ifs, span = 0.75)
+    ifs <-
+      gc_correct(
+        ifs,
+        span = 0.75,
+        method = script_args$gc_correct_method,
+        max_training_dataset = script_args$gc_correct_n,
+        thread = script_args$thread, 
+      )
     log_mem("Done GC correction")
   } else {
     # No GC correction, just placeholder
