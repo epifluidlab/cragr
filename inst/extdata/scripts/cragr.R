@@ -28,7 +28,7 @@ parse_script_args <- function() {
   if (interactive()) {
     script_args <- get0("script_args")
     subcommand <- get0("subcommand")
-
+    
     if (is.null(script_args) || is.null(subcommand))
       stop()
     else {
@@ -42,10 +42,10 @@ parse_script_args <- function() {
     args <- commandArgs(trailingOnly = TRUE)
     subcommand <- args[1]
     args <- args[-1]
-
+    
     if (!subcommand %in% c("ifs", "peak", "signal"))
       stop("Subcommand should be one of the following: ifs, peak, hotspot, signal")
-
+    
     # Run in CLI script mode
     parser <- optparse::OptionParser(
       option_list = list(
@@ -58,6 +58,16 @@ parse_script_args <- function() {
           default = FALSE,
           action = "store_true",
           help = "Whether to perform GC correction"
+        ),
+        optparse::make_option(
+          c("--gc-correct-method"),
+          default = "standard",
+          help = "Methods used in GC correction. Should be either standard or caret [standard]"
+        ),
+        optparse::make_option(
+          c("--gc-correct-n"),
+          default = 1e6L,
+          help = "Maximal sample size for GC correction model training [1e6L]"
         ),
         optparse::make_option(
           c("-m", "--high-mappability"),
@@ -100,9 +110,9 @@ parse_script_args <- function() {
         optparse::make_option(
           c("-w", "--window-size"),
           default = 200L,
-          help = "Size of the sliding window. Default is 200"
+          help = "Size of the sliding window [200]"
         ),
-        optparse::make_option(c("-s", "--step-size"), default = 20L, help = "Step size of the sliding window. Default is 20"),
+        optparse::make_option(c("-s", "--step-size"), default = 20L, help = "Step size of the sliding window [20]"),
         # optparse::make_option(
         #   c("--cpois"),
         #   action = "store_true",
@@ -115,28 +125,29 @@ parse_script_args <- function() {
         # optparse::make_option(c("--hotspot-method"), default = "pois"),
         optparse::make_option(c("--signal"), help = "The signal BED file"),
         optparse::make_option(c("--signal-hw"), default = 1000L),
+        optparse::make_option(c("-t", "--thread", default = 1L, help = "Number of threads [1]")),
         optparse::make_option(c("--verbose"), default = FALSE, action = "store_true")
       )
     )
-
+    
     script_args <-
       optparse::parse_args(parser,
                            args = args,
                            convert_hyphens_to_underscores = TRUE)
-
+    
     library(tidyverse)
     library(magrittr)
-
+    
     # Process arguments
     if ("input" %in% names(script_args)) {
       script_args$input <-
         str_split(script_args$input, pattern = ":")[[1]]
     }
-
+    
     if (!("chrom" %in% names(script_args)))
       script_args$chrom <- NULL
-
-
+    
+    
     c("chrom", "exclude_chrom", "exclude_region") %>%
       walk(function(arg) {
         if (!is.null(script_args[[arg]])) {
@@ -144,7 +155,7 @@ parse_script_args <- function() {
             str_split(script_args[[arg]], pattern = "[:,]")[[1]]
         }
       })
-
+    
     c("min_mapq",
       "min_fraglen",
       "max_fraglen",
@@ -154,10 +165,10 @@ parse_script_args <- function() {
         if (!is_null(script_args))
           script_args[[arg]] <<- as.numeric(script_args[[arg]])
       })
-
+    
     if (script_args$window_size %% script_args$step_size != 0)
       stop("window_size must be multiples of step_size")
-
+    
     # genome must be hs37-1kg
     assertthat::assert_that(
       is_scalar_character(script_args$genome) &&
@@ -166,9 +177,9 @@ parse_script_args <- function() {
     # if (script_args$genome != "hs37-1kg") {
     #   stop("Currently, only genome hs37-1kg is supported")
     # }
-
+    
     # assertthat::assert_that(script_args$hotspot_method %in% c("pois", "nb"))
-
+    
     return(list(subcommand, script_args))
   }
 }
@@ -197,16 +208,16 @@ write_ifs_as_bedgraph <- function(ifs, script_args, comments) {
   # 5:    21 10873250 10873270 73.56209  33   0.9200000 0.510 63.87727      37.78962 1.0000000           1  1.0000000                 1
   ws_ratio <- script_args$window_size %/% script_args$step_size
   offset <- as.integer((ws_ratio - 1) / 2 * script_args$step_size)
-
+  
   GenomicRanges::start(ifs) <- GenomicRanges::start(ifs) + offset
   GenomicRanges::width(ifs) <- script_args$step_size
-
+  
   # # Rearrage orders
   # df <- GenomicRanges::mcols(ifs) %>%
   #   as_tibble() %>%
   #   relocate(c(z_score, score), .after = end) %>% select(-gc, -mappability)
   # GenomicRanges::mcols(ifs) <- df
-
+  
   bedtorch::write_bed(ifs,
                       file_path = script_args$output,
                       comments = comments)
@@ -250,7 +261,7 @@ log_mem <- function(label = "Unknown") {
 # 3. Calculate GC content for each fragment
 subcommand_ifs <- function(script_args) {
   logging::loginfo("Input: fragment data")
-
+  
   # Make sure the genome is available
   bsgenome <- switch(
     script_args$genome,
@@ -259,9 +270,9 @@ subcommand_ifs <- function(script_args) {
     "GRCh38" = "BSgenome.Hsapiens.NCBI.GRCh38",
     stop(paste0("Invalid genome: ", genome_name))
   )
-
+  
   assertthat::assert_that(requireNamespace(bsgenome), msg = str_interp("${bsgenome} is required"))
-
+  
   frag <- script_args$input %>% map(function(input_file) {
     logging::loginfo(str_interp("Loading fragments: ${input_file} ..."))
     if (!is_null(script_args$chrom)) {
@@ -277,7 +288,7 @@ subcommand_ifs <- function(script_args) {
         frag <- frag[!GenomicRanges::seqnames(frag) %in% script_args$exclude_chrom]
       }
     }
-
+    
     # # Apply filters
     # min_mapq <- as.integer(script_args$min_mapq)
     # if (isTRUE(min_mapq > 0) && "mapq" %in% colnames(GenomicRanges::mcols(frag))) {
@@ -296,16 +307,16 @@ subcommand_ifs <- function(script_args) {
     #   frag <- frag[!grepl(pattern = "^[0-9]+S", x = frag$cigar1) &
     #                  !grepl(pattern = "[0-9]+S$", x = frag$cigar2)]
     # }
-
+    
     frag
   }) %>% do.call(c, args = .)
-
+  
   frag <- sort(frag)
-
+  
   logging::loginfo("Fragments summary:")
   print(frag)
   log_mem("Done loading fragments")
-
+  
   logging::loginfo("Calculating IFS scores ...")
   result <- ifs_score(
     frag,
@@ -319,29 +330,29 @@ subcommand_ifs <- function(script_args) {
     max_fraglen = script_args$max_fraglen,
     exclude_soft_clipping = script_args$exclude_soft_clipping
   )
-
+  
   rm(frag)
-
+  
   ifs <- result$ifs
   avg_len <- result$avg_len
   frag_cnt <- result$frag_cnt
-
+  
   comments <-
     c(comments,
       str_interp("avg_len=${avg_len}"),
       str_interp("frag_cnt=${frag_cnt}"))
-
+  
   logging::loginfo("Raw IFS summary:")
   print(ifs)
   log_mem("Done calculating raw IFS scores")
-
+  
   # if (script_args$gc_correct) {
   # Always calculate GC
   if (TRUE) {
     ifs <- calc_gc(ifs)
     log_mem("Done calculating GC contents")
   }
-
+  
   bedtorch::write_bed(ifs, file_path = script_args$output, comments = comments)
 }
 
@@ -353,28 +364,35 @@ subcommand_peak <- function(script_args) {
     bedtorch::read_bed(
       script_args$input,
       genome = script_args$genome,
-      col.names = c("chrom", "start", "end", "score", "cov", "gc")
+      col.names = c("chrom", "start", "end", "score", "cov", "fraglen", "gc")
     )
-
+  
   logging::loginfo("Raw IFS summary:")
   print(ifs)
-
+  
   if (script_args$gc_correct) {
     logging::loginfo("Performing GC correction ...")
-    ifs <- gc_correct(ifs, span = 0.75)
+    ifs <-
+      gc_correct(
+        ifs,
+        span = 0.75,
+        method = script_args$gc_correct_method,
+        max_training_dataset = script_args$gc_correct_n,
+        thread = script_args$thread, 
+      )
     log_mem("Done GC correction")
   } else {
     # No GC correction, just placeholder
     ifs$score0 <- ifs$score
   }
-
+  
   logging::loginfo("Calculating z-scores ...")
   ifs <- calc_ifs_z_score(ifs)
-
+  
   logging::loginfo("Calculating global p-values ...")
   ifs <- calc_pois_pval(ifs)
   log_mem("Done calculating global p-values")
-
+  
   logging::loginfo("Calculating local p-values ...")
   ifs <-
     calc_pois_pval_local(
@@ -384,10 +402,10 @@ subcommand_peak <- function(script_args) {
       local_layout = list(`50k` = 50e3L) #list(`5k` = 5e3L, `10k` = 10e3L, `25k` = 25e3L, `50k` = 50e3L)
     )
   log_mem("Done calculating local p-values")
-
+  
   logging::loginfo("IFS summary:")
   print(ifs)
-
+  
   write_ifs_as_bedgraph(ifs, script_args, comments)
 }
 
@@ -442,7 +460,7 @@ subcommand_peak <- function(script_args) {
 subcommand_signal <- function(script_args) {
   hotspot <- bedtorch::read_bed(script_args$input)
   # %>% bedtorch::merge_bed(max_dist = script_args$merge_distance)
-
+  
   logging::loginfo("Loading signal file ...")
   signal <- unique(GenomicRanges::seqnames(hotspot)) %>%
     map(function(chrom) {
@@ -452,17 +470,17 @@ subcommand_signal <- function(script_args) {
       hotspot_end <- GenomicRanges::end(hotspot) + script_args$signal_hw
       GenomicRanges::ranges(hotspot) <-
         IRanges::IRanges(start = hotspot_start, end = hotspot_end)
-
+      
       signal <- bedtorch::read_bed(script_args$signal, range = chrom)
       GenomeInfoDb::seqlevels(signal) <- GenomeInfoDb::seqlevels(hotspot)
       hits <- GenomicRanges::findOverlaps(signal, hotspot)
       signal[unique(S4Vectors::queryHits(hits))]
     }) %>%
     do.call(c, args = .)
-
+  
   logging::loginfo("Calculating signal profile over hotspots ...")
   result <- signal_level_analysis(hotspot = hotspot, signal = signal, half_width = script_args$signal_hw)
-
+  
   logging::loginfo("Writing results to disk ...")
   readr::write_tsv(result, file = script_args$output)
 }
@@ -470,29 +488,24 @@ subcommand_signal <- function(script_args) {
 # Main ----
 if (interactive()) {
   subcommand <- "ifs"
-
+  
   # example
   script_args <- list(
-    input = "sandbox/frag/Pilot2_34.GRCh38.frag.bed.gz",
-    input_ifs = "sandbox/Pilot2_34.GRCh38.ifs.raw.chr21.bed.gz",
-    # input_hotspot = "sandbox/xh_intermediate/batch2_res_merged_sort.chr21.hotspot.bed.gz",
-    # genome = "hs37-1kg",
-    output = "sandbox/Pilot2_34.GRCh38.ifs.raw.chr21.bed.gz",
-    genome = "GRCh38",
+    input = "sandbox/frag/inhouse_breast_healthy_v2.hg19.frag.bed.gz",
+    output = "sandbox/inhouse_breast_healthy_v2.ifs.raw.chr17.bed.gz",
+    genome = "GRCh37",
     gc_correct = FALSE,
-    high_mappability = "crag/data/mappability.hg38.w200.s20.0_9.bed.gz",
-    chrom = "21",
+    gc_correct_method = "standard",
+    high_mappability = NULL,
+    chrom = "17",
     exclude_chrom = NULL,
     min_mapq = 30L,
     min_fraglen = 50L,
     max_fraglen = 1000L,
-    exclude_region = NULL,
+    exclude_region = "sandbox/data/ENCODE.blacklist.hg19.ENCFF001TDO.bed",
     exclude_soft_clipping = TRUE,
     window_size = 200L,
     step_size = 20L,
-    cpois = FALSE,
-    fdr = 0.01,
-    local_pval = 1e-5,
     verbose = TRUE
   )
 } else {
@@ -532,8 +545,8 @@ if (subcommand == "ifs") {
   subcommand_ifs(script_args)
 } else if (subcommand == "peak") {
   subcommand_peak(script_args)
-# } else if (subcommand == "hotspot") {
-#   subcommand_hotspot(script_args)
+  # } else if (subcommand == "hotspot") {
+  #   subcommand_hotspot(script_args)
 } else if (subcommand == "signal") {
   subcommand_signal(script_args)
 } else {

@@ -9,3 +9,5 @@ data
 results
 pit
 lab_journal
+.Rbuildignore
+*.Rproj
