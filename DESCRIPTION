@@ -1,6 +1,6 @@
 Package: cragr
 Title: R package for CRAG
-Version: 0.1.8.9
+Version: 0.1.8.10
 Authors@R: 
     person(given = "Haizi",
            family = "Zheng",

@@ -451,8 +451,7 @@ gc_correct_standard <-
     # Exclude outliers from the training dataset
     outlier_flag <- exclude_outlier(ifs_train$score0, mark = TRUE)
     train_data <-
-      data.table::data.table(gc = ifs_train$gc[!outlier_flag], score0 = ifs_train$score0[!outlier_flag]) %>%
-      slice_sample(n = max_training_dataset)
+      data.table::data.table(gc = ifs_train$gc[!outlier_flag], score0 = ifs_train$score0[!outlier_flag])
     model <-
       loess(
         formula = score0 ~ gc,
