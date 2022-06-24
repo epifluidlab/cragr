@@ -109,7 +109,7 @@ Finally, the hotspot regions can be called from IFS scores:
     awk -F'\t' -v OFS="\t" 'substr($1,1,1)!="#" && $17<=0.2 && $17!="."' |
     bedtools slop -g inst/extdata/human_g1k_v37.chrom.sizes -i - -b 90 -header |
     bedtools merge -header -i - -d 200 -c 17 -o min |
-    bgzip >> hotspot.bed.gz
+    bgzip > hotspot.bed.gz
 
 The hotspot BED file contains fourth columns as shown below:
 
@@ -121,6 +121,19 @@ The hotspot BED file contains fourth columns as shown below:
 ```
 
 The fourth column is the FDR (BH-corrected) associated with the hotspot. Lower values indicate more significant hotspots.
+
+### Calculate IFS scores over hotspots
+
+```
+Rscript $HOME/dev/cragr/inst/extdata/scripts/cragr.R signal \
+-i frag.bed.gz \
+--hotspot hotspot.bed.gz \
+-o ifs_hotspot.bed.gz \
+--gc-correct \
+--genome GRCh37 \
+--exclude-region encode.blacklist.hs37-1kg
+--chrom 22
+```
 
 ### Run with snakemake
 
