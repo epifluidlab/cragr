@@ -106,7 +106,7 @@ The output file `ifs.bedGraph.gz` is the track of IFS scores.
 Finally, the hotspot regions can be called from IFS scores:
 
     zcat ifs.bedGraph.gz |
-    awk -F'\t' -v OFS="\t" 'substr($1,1,1)!="#" && $16<=0.2 && $16!="."' |
+    awk -F'\t' -v OFS="\t" 'substr($1,1,1)!="#" && $17<=0.2 && $17!="."' |
     bedtools slop -g inst/extdata/human_g1k_v37.chrom.sizes -i - -b 90 -header |
     bedtools merge -header -i - -d 200 |
     bgzip >> hotspot.bed.gz
