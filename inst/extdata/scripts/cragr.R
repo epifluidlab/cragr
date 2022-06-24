@@ -204,8 +204,8 @@ signal_parser <- optparse::OptionParser(
     ),
     optparse::make_option(
       c("-w", "--window-size"),
-      default = 2000L,
-      help = "Size of the sliding window [2000]"
+      default = 200L,
+      help = "Size of the sliding window [200]"
     ),
     # optparse::make_option(c("-s", "--step-size"), default = 20L, help = "Step size of the sliding window [20]"),
     optparse::make_option(c("-t", "--thread", default = 1L, help = "Number of threads [1]")),
