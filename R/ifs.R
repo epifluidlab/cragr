@@ -387,11 +387,11 @@ gc_correct_caret <-
     
     logging::loginfo("Performin GC correction through caret/gamLoess ...")
     
-    ifs$score0 <- ifs$score
+    ifs$score_pre_gc <- ifs$score
     
     sel_idx <- 1:length(ifs)
     # Exclude GC/score with NAs, otherwise the model training may fail
-    sel_idx <- sel_idx[!is.na(ifs$gc) & !is.na(ifs$score0)]
+    sel_idx <- sel_idx[!is.na(ifs$gc) & !is.na(ifs$score_pre_gc)]
     
     # Use all points
     if (length(sel_idx) > max_training_dataset) {
@@ -416,7 +416,7 @@ gc_correct_caret <-
     
     model <- train(
       x = data.frame(gc = ifs$gc[sel_idx]),
-      y = ifs$score0[sel_idx],
+      y = ifs$score_pre_gc[sel_idx],
       method = "gamLoess"
     )
     stopCluster(cl)
@@ -432,7 +432,7 @@ gc_correct_caret <-
     pred <- predict(model, newdata = data.frame(gc = ifs$gc[!na_idx]))
     ifs$score <- NA
     ifs$score[!na_idx] <-
-      pmax(0, ifs$score0[!na_idx] - pred + mean(ifs$score0, na.rm = TRUE))
+      pmax(0, ifs$score_pre_gc[!na_idx] - pred + mean(ifs$score_pre_gc, na.rm = TRUE))
     
     # In rare cases, GC-corrected scores can be NA. Don't know why.
     # Here we drop out any of those
@@ -465,7 +465,7 @@ gc_correct_standard <-
     
     logging::loginfo("Performin GC correction through standard LOESS regression ...")
 
-    ifs$score0 <- ifs$score
+    ifs$score_pre_gc <- ifs$score
     sel_idx <- 1:length(ifs)
 
     # Use all points
@@ -484,12 +484,12 @@ gc_correct_standard <-
     ifs_train <- ifs[sel_idx]
     
     # Exclude outliers from the training dataset
-    outlier_flag <- exclude_outlier(ifs_train$score0, mark = TRUE)
+    outlier_flag <- exclude_outlier(ifs_train$score_pre_gc, mark = TRUE)
     train_data <-
-      data.table::data.table(gc = ifs_train$gc[!outlier_flag], score0 = ifs_train$score0[!outlier_flag])
+      data.table::data.table(gc = ifs_train$gc[!outlier_flag], score_pre_gc = ifs_train$score_pre_gc[!outlier_flag])
     model <-
       loess(
-        formula = score0 ~ gc,
+        formula = score_pre_gc ~ gc,
         data = train_data,
         span = span,
         control = loess.control(
@@ -505,7 +505,7 @@ gc_correct_standard <-
 
     logging::loginfo("Applying the model for GC correction ...")
     ifs$score <-
-      ifs$score0 - predict(model, newdata = ifs$gc) + mean(ifs$score0)
+      ifs$score_pre_gc - predict(model, newdata = ifs$gc) + mean(ifs$score_pre_gc)
     ifs$score <- ifelse(ifs$score < 0, 0, ifs$score)
 
     # In rare cases, GC-corrected scores can be NA. Don't know why.

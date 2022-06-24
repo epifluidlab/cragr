@@ -28,29 +28,28 @@ library(rlang)
 
 ifs_parser <- optparse::OptionParser(
   option_list = list(
-    optparse::make_option(c("-i", "--input"), help = "Path to the input file. If there are multiple input files, they should be separated by colons"),
-    optparse::make_option(c("-o", "--output"), type = "character", help = "Path to output file"),
-    optparse::make_option(c("--genome"), type = "character", help = "Genome of the input"),
+    optparse::make_option(opt_str = c("-i", "--input"),
+                          help = "Path to the input fragment file. The file should be in bgzip-compressed BED format, alongside with the .tbi index file."), 
+    optparse::make_option(c("-o", "--output"), type = "character", help = "Path to the output file."),
+    optparse::make_option(c("--genome"), type = "character", help = "Which reference genome the input fragment file is based on. Should be either GRCh37 or GRCh38."),
     optparse::make_option(
       c("-g", "--gc-correct"),
       default = FALSE,
       action = "store_true",
-      help = "Whether to perform GC correction"
+      help = "Perform GC correction."
     ),
     optparse::make_option(
       c("--gc-correct-method"),
       default = "standard",
-      help = "Methods used in GC correction. Should be either standard or caret [standard]"
+      help = "GC correction method. Should be either standard or caret [standard]"
     ),
-    optparse::make_option(
-      c("--gc-correct-n"),
-      default = 1e6L,
-      help = "Maximal sample size for GC correction model training [1e6L]"
-    ),
+    optparse::make_option(c("--gc-correct-n"),
+                          default = 1e6L,
+                          help = "Maximal number of data points for GC correction model training [1000000]"),
     optparse::make_option(
       c("-m", "--high-mappability"),
       type = "character",
-      help = "Path to the mappability file. Default is NULL, i.e. do NOT exclude fragments from low-mappability regions"
+      help = "Path to the mappability file, which should be in BED format [NULL]"
     ),
     optparse::make_option(
       c("--chrom"),
@@ -58,12 +57,12 @@ ifs_parser <- optparse::OptionParser(
       default = NULL,
       help = "Perform the analysis only for a selected group of chromosomes. Separated by colons, such as 12:16:X. If not provided, all chromosomes found in the input file will be used"
     ),
-    optparse::make_option(
-      c("--exclude-chrom"),
-      type = "character",
-      default = NULL,
-      help = "Exclude chromosomes from the analysis. Separated by colons, such as 12:16:X"
-    ),
+    # optparse::make_option(
+    #   c("--exclude-chrom"),
+    #   type = "character",
+    #   default = NULL,
+    #   help = "Exclude chromosomes from the analysis. Separated by colons, such as 12:16:X"
+    # ),
     optparse::make_option(c("--min-mapq"),
                           default = 30L,
                           help = "Minimal MAPQ for fragments included in the analysis"),
@@ -76,7 +75,8 @@ ifs_parser <- optparse::OptionParser(
     optparse::make_option(
       c("--exclude-region"),
       type = "character",
-      default = NULL, # "encode.blacklist.hs37-1kg",
+      default = NULL,
+      # "encode.blacklist.hs37-1kg",
       help = "BED files defining regions to be excluded from the analysis, separated by colon. Default is the ENCODE Blacklist: https://www.nature.com/articles/s41598-019-45839-z, which is included in this R package"
     ),
     optparse::make_option(
@@ -85,13 +85,13 @@ ifs_parser <- optparse::OptionParser(
       default = FALSE,
       help = "Exclude fragments with leading soft-clipping from the analysis"
     ),
-    optparse::make_option(
-      c("-w", "--window-size"),
-      default = 200L,
-      help = "Size of the sliding window [200]"
-    ),
+    optparse::make_option(c("-w", "--window-size"),
+                          default = 200L,
+                          help = "Size of the sliding window [200]"),
     optparse::make_option(c("-s", "--step-size"), default = 20L, help = "Step size of the sliding window [20]"),
-    optparse::make_option(c("-t", "--thread", default = 1L, help = "Number of threads [1]")),
+    optparse::make_option(c(
+      "-t", "--thread", default = 1L, help = "Number of threads [1]"
+    )),
     optparse::make_option(c("--verbose"), default = FALSE, action = "store_true")
   )
 )
@@ -124,12 +124,12 @@ peak_parser <- optparse::OptionParser(
       default = NULL,
       help = "Perform the analysis only for a selected group of chromosomes. Separated by colons, such as 12:16:X. If not provided, all chromosomes found in the input file will be used"
     ),
-    optparse::make_option(
-      c("--exclude-chrom"),
-      type = "character",
-      default = NULL,
-      help = "Exclude chromosomes from the analysis. Separated by colons, such as 12:16:X"
-    ),
+    # optparse::make_option(
+    #   c("--exclude-chrom"),
+    #   type = "character",
+    #   default = NULL,
+    #   help = "Exclude chromosomes from the analysis. Separated by colons, such as 12:16:X"
+    # ),
     optparse::make_option(
       c("-w", "--window-size"),
       default = 200L,
@@ -175,12 +175,12 @@ signal_parser <- optparse::OptionParser(
       default = NULL,
       help = "Perform the analysis only for a selected group of chromosomes. Separated by colons, such as 12:16:X. If not provided, all chromosomes found in the input file will be used"
     ),
-    optparse::make_option(
-      c("--exclude-chrom"),
-      type = "character",
-      default = NULL,
-      help = "Exclude chromosomes from the analysis. Separated by colons, such as 12:16:X"
-    ),
+    # optparse::make_option(
+    #   c("--exclude-chrom"),
+    #   type = "character",
+    #   default = NULL,
+    #   help = "Exclude chromosomes from the analysis. Separated by colons, such as 12:16:X"
+    # ),
     optparse::make_option(c("--min-mapq"),
                           default = 30L,
                           help = "Minimal MAPQ for fragments included in the analysis"),
@@ -478,7 +478,7 @@ subcommand_peak <- function(script_args) {
     log_mem("Done GC correction")
   } else {
     # No GC correction, just placeholder
-    ifs$score0 <- ifs$score
+    ifs$score_pre_gc <- ifs$score
   }
   
   logging::loginfo("Calculating z-scores ...")
@@ -516,6 +516,10 @@ subcommand_signal <- function(script_args) {
     stop(paste0("Invalid genome: ", genome_name))
   )
   assertthat::assert_that(requireNamespace(bsgenome), msg = str_interp("${bsgenome} is required"))
+  assertthat::assert_that(
+    rlang::is_scalar_character(script_args$chrom),
+    "chrom should be the name of a single chromosome"
+  )
   
   logging::loginfo("Loading fragment files ...")
   # Calculate IFS scores as usual, which is used to get the GC-correction model
@@ -588,7 +592,7 @@ subcommand_signal <- function(script_args) {
   )
   ifs2 <- result$ifs
   ifs2 <- calc_gc(ifs2)
-  ifs2$score0 <- ifs2$score
+  ifs2$score_pre_gc <- ifs2$score
   
   if (script_args$gc_correct) {
     na_idx <- is.na(ifs2$gc)
@@ -596,9 +600,13 @@ subcommand_signal <- function(script_args) {
       predict(gc_model, newdata = data.frame(gc = ifs2$gc[!na_idx]))
     ifs2$score <- NA
     ifs2$score[!na_idx] <-
-      pmax(0, ifs2$score0[!na_idx] - pred + mean(ifs2$score0, na.rm = TRUE))
+      pmax(0, ifs2$score_pre_gc[!na_idx] - pred + mean(ifs2$score_pre_gc, na.rm = TRUE))
     ifs2$score[ifs2$score < 0] <- 0
   }
+  
+  score_mean <- mean(ifs$score, na.rm = TRUE)
+  score_sd <- sd(ifs$score, na.rm = TRUE)
+  ifs2$z_score <- (ifs2$score - score_mean) / score_sd
   
   bedtorch::write_bed(ifs2, file_path = script_args$output, comments = comments)
 }
