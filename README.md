@@ -98,7 +98,6 @@ The following example perform stage 2 analysis for chromosome 14:
     -o ifs.bedGraph.gz \
     --gc-correct \
     --genome GRCh37 \
-    --exclude-region encode.blacklist.hs37-1kg \
     --chrom 14
 
 The output file `ifs.bedGraph.gz` is the track of IFS scores.

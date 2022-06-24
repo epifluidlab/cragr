@@ -41,21 +41,20 @@ ifs_parser <- optparse::OptionParser(
     optparse::make_option(
       c("--gc-correct-method"),
       default = "standard",
-      help = "GC correction method. Should be either standard or caret [standard]"
+      help = "GC correction method. Should be either standard or caret [standard]."
     ),
     optparse::make_option(c("--gc-correct-n"),
                           default = 1e6L,
-                          help = "Maximal number of data points for GC correction model training [1000000]"),
+                          help = "Maximal number of data points for GC correction model training [1000000]."),
     optparse::make_option(
       c("-m", "--high-mappability"),
       type = "character",
-      help = "Path to the mappability file, which should be in BED format [NULL]"
+      help = "Path to the mappability file, which should be in BED format [NULL]."
     ),
     optparse::make_option(
       c("--chrom"),
       type = "character",
-      default = NULL,
-      help = "Perform the analysis only for a selected group of chromosomes. Separated by colons, such as 12:16:X. If not provided, all chromosomes found in the input file will be used"
+      help = "Perform the analysis for the specified chromosome."
     ),
     # optparse::make_option(
     #   c("--exclude-chrom"),
@@ -65,13 +64,13 @@ ifs_parser <- optparse::OptionParser(
     # ),
     optparse::make_option(c("--min-mapq"),
                           default = 30L,
-                          help = "Minimal MAPQ for fragments included in the analysis"),
+                          help = "Minimal MAPQ for fragments included in the analysis."),
     optparse::make_option(c("--min-fraglen"),
                           default = 50L,
-                          help = "Minimal length for fragments included in the analysis"),
+                          help = "Minimal length for fragments included in the analysis."),
     optparse::make_option(c("--max-fraglen"),
                           default = 1000L,
-                          help = "Maximal length for fragments included in the analysis"),
+                          help = "Maximal length for fragments included in the analysis."),
     optparse::make_option(
       c("--exclude-region"),
       type = "character",
@@ -278,7 +277,7 @@ parse_script_args <- function() {
       "window_size",
       "step_size") %>%
       walk(function(arg) {
-        if (!is_null(script_args))
+        if (!is_null(script_args) && arg %in% names(script_args))
           script_args[[arg]] <<- as.numeric(script_args[[arg]])
       })
     
@@ -518,7 +517,7 @@ subcommand_signal <- function(script_args) {
   assertthat::assert_that(requireNamespace(bsgenome), msg = str_interp("${bsgenome} is required"))
   assertthat::assert_that(
     rlang::is_scalar_character(script_args$chrom),
-    "chrom should be the name of a single chromosome"
+    msg = "chrom should be the name of a single chromosome"
   )
   
   logging::loginfo("Loading fragment files ...")
@@ -541,26 +540,28 @@ subcommand_signal <- function(script_args) {
     
     frag
   }) %>% do.call(c, args = .)
-  
   frag <- sort(frag)
+  
+  # IFS from all fragments. Necessary for GC and z-score transformation
+  result <- ifs_score(
+    frag,
+    window_size = script_args$window_size,
+    step_size = script_args$window_size,
+    gc_correct = script_args$gc_correct,
+    blacklist_region = script_args$exclude_region,
+    high_mappability_region = script_args$high_mappability,
+    min_mapq = script_args$min_mapq,
+    min_fraglen = script_args$min_fraglen,
+    max_fraglen = script_args$max_fraglen,
+    exclude_soft_clipping = script_args$exclude_soft_clipping
+  )
+  ifs <- result$ifs
+  ifs <- calc_gc(ifs)
+  ifs$score_pre_gc <- ifs$score
   
   if (script_args$gc_correct) {
     logging::loginfo("Perform GC correction ...")
     
-    result <- ifs_score(
-      frag,
-      window_size = script_args$window_size,
-      step_size = script_args$window_size,
-      gc_correct = script_args$gc_correct,
-      blacklist_region = script_args$exclude_region,
-      high_mappability_region = script_args$high_mappability,
-      min_mapq = script_args$min_mapq,
-      min_fraglen = script_args$min_fraglen,
-      max_fraglen = script_args$max_fraglen,
-      exclude_soft_clipping = script_args$exclude_soft_clipping
-    )
-    ifs <- result$ifs
-    ifs <- calc_gc(ifs)
     gc_result <-
       gc_correct(
         ifs,
@@ -571,9 +572,12 @@ subcommand_signal <- function(script_args) {
         return_model = TRUE
       )
     gc_model <- gc_result$model
+    ifs <- gc_result$ifs
   } else {
     gc_model <- NULL
   }
+  score_mean <- mean(ifs$score, na.rm = TRUE)
+  score_sd <- sd(ifs$score, na.rm = TRUE)
   
   hotspot <- bedtorch::read_bed(script_args$hotspot, genome = script_args$genome)
   hotspot <- GenomicRanges::resize(hotspot, width = script_args$window_size, fix = "center")
@@ -600,14 +604,10 @@ subcommand_signal <- function(script_args) {
       predict(gc_model, newdata = data.frame(gc = ifs2$gc[!na_idx]))
     ifs2$score <- NA
     ifs2$score[!na_idx] <-
-      pmax(0, ifs2$score_pre_gc[!na_idx] - pred + mean(ifs2$score_pre_gc, na.rm = TRUE))
-    ifs2$score[ifs2$score < 0] <- 0
+      pmax(0, ifs2$score_pre_gc[!na_idx] - pred + mean(ifs$score_pre_gc, na.rm = TRUE))
   }
   
-  score_mean <- mean(ifs$score, na.rm = TRUE)
-  score_sd <- sd(ifs$score, na.rm = TRUE)
   ifs2$z_score <- (ifs2$score - score_mean) / score_sd
-  
   bedtorch::write_bed(ifs2, file_path = script_args$output, comments = comments)
 }
 
