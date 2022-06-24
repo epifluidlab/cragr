@@ -3,6 +3,7 @@
 #' @import purrr
 #' @import stringr
 #' @importFrom magrittr `%<>%`
+#' @importFrom rlang is_null is_true
 #' @importFrom data.table setnames setkey fread fwrite shift setDT data.table rbindlist as.data.table
 #' @importFrom GenomicRanges makeGRangesFromDataFrame findOverlaps countOverlaps mcols `mcols<-`
 #' @importFrom GenomicRanges pintersect ranges `ranges<-` width `width<-` start `start<-` end `end<-` strand `strand<-`

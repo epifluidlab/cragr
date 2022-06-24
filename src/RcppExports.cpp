@@ -5,6 +5,11 @@
 
 using namespace Rcpp;
 
+#ifdef RCPP_USE_GLOBAL_ROSTREAM
+Rcpp::Rostream<true>&  Rcpp::Rcout = Rcpp::Rcpp_cout_get();
+Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
+#endif
+
 // rollmean
 NumericVector rollmean(NumericVector x, int k, bool na_pad, bool na_rm, std::string align);
 RcppExport SEXP _cragr_rollmean(SEXP xSEXP, SEXP kSEXP, SEXP na_padSEXP, SEXP na_rmSEXP, SEXP alignSEXP) {

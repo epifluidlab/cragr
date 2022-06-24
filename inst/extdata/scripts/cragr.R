@@ -4,6 +4,8 @@ stop_quietly <- function() {
   stop()
 }
 
+library(rlang)
+
 # Example
 # subcommand <- "ifs"
 # script_args <- list(
@@ -24,12 +26,201 @@ stop_quietly <- function() {
 # )
 
 
+ifs_parser <- optparse::OptionParser(
+  option_list = list(
+    optparse::make_option(c("-i", "--input"), help = "Path to the input file. If there are multiple input files, they should be separated by colons"),
+    optparse::make_option(c("-o", "--output"), type = "character", help = "Path to output file"),
+    optparse::make_option(c("--genome"), type = "character", help = "Genome of the input"),
+    optparse::make_option(
+      c("-g", "--gc-correct"),
+      default = FALSE,
+      action = "store_true",
+      help = "Whether to perform GC correction"
+    ),
+    optparse::make_option(
+      c("--gc-correct-method"),
+      default = "standard",
+      help = "Methods used in GC correction. Should be either standard or caret [standard]"
+    ),
+    optparse::make_option(
+      c("--gc-correct-n"),
+      default = 1e6L,
+      help = "Maximal sample size for GC correction model training [1e6L]"
+    ),
+    optparse::make_option(
+      c("-m", "--high-mappability"),
+      type = "character",
+      help = "Path to the mappability file. Default is NULL, i.e. do NOT exclude fragments from low-mappability regions"
+    ),
+    optparse::make_option(
+      c("--chrom"),
+      type = "character",
+      default = NULL,
+      help = "Perform the analysis only for a selected group of chromosomes. Separated by colons, such as 12:16:X. If not provided, all chromosomes found in the input file will be used"
+    ),
+    optparse::make_option(
+      c("--exclude-chrom"),
+      type = "character",
+      default = NULL,
+      help = "Exclude chromosomes from the analysis. Separated by colons, such as 12:16:X"
+    ),
+    optparse::make_option(c("--min-mapq"),
+                          default = 30L,
+                          help = "Minimal MAPQ for fragments included in the analysis"),
+    optparse::make_option(c("--min-fraglen"),
+                          default = 50L,
+                          help = "Minimal length for fragments included in the analysis"),
+    optparse::make_option(c("--max-fraglen"),
+                          default = 1000L,
+                          help = "Maximal length for fragments included in the analysis"),
+    optparse::make_option(
+      c("--exclude-region"),
+      type = "character",
+      default = NULL, # "encode.blacklist.hs37-1kg",
+      help = "BED files defining regions to be excluded from the analysis, separated by colon. Default is the ENCODE Blacklist: https://www.nature.com/articles/s41598-019-45839-z, which is included in this R package"
+    ),
+    optparse::make_option(
+      c("--exclude-soft-clipping"),
+      action = "store_true",
+      default = FALSE,
+      help = "Exclude fragments with leading soft-clipping from the analysis"
+    ),
+    optparse::make_option(
+      c("-w", "--window-size"),
+      default = 200L,
+      help = "Size of the sliding window [200]"
+    ),
+    optparse::make_option(c("-s", "--step-size"), default = 20L, help = "Step size of the sliding window [20]"),
+    optparse::make_option(c("-t", "--thread", default = 1L, help = "Number of threads [1]")),
+    optparse::make_option(c("--verbose"), default = FALSE, action = "store_true")
+  )
+)
+
+
+peak_parser <- optparse::OptionParser(
+  option_list = list(
+    optparse::make_option(c("-i", "--input"), help = "Path to the input file. If there are multiple input files, they should be separated by colons"),
+    optparse::make_option(c("-o", "--output"), type = "character", help = "Path to output file"),
+    optparse::make_option(c("--genome"), type = "character", help = "Genome of the input"),
+    optparse::make_option(
+      c("-g", "--gc-correct"),
+      default = FALSE,
+      action = "store_true",
+      help = "Whether to perform GC correction"
+    ),
+    optparse::make_option(
+      c("--gc-correct-method"),
+      default = "standard",
+      help = "Methods used in GC correction. Should be either standard or caret [standard]"
+    ),
+    optparse::make_option(
+      c("--gc-correct-n"),
+      default = 1e6L,
+      help = "Maximal sample size for GC correction model training [1e6L]"
+    ),
+    optparse::make_option(
+      c("--chrom"),
+      type = "character",
+      default = NULL,
+      help = "Perform the analysis only for a selected group of chromosomes. Separated by colons, such as 12:16:X. If not provided, all chromosomes found in the input file will be used"
+    ),
+    optparse::make_option(
+      c("--exclude-chrom"),
+      type = "character",
+      default = NULL,
+      help = "Exclude chromosomes from the analysis. Separated by colons, such as 12:16:X"
+    ),
+    optparse::make_option(
+      c("-w", "--window-size"),
+      default = 200L,
+      help = "Size of the sliding window [200]"
+    ),
+    optparse::make_option(c("-s", "--step-size"), default = 20L, help = "Step size of the sliding window [20]"),
+    optparse::make_option(c("-t", "--thread", default = 1L, help = "Number of threads [1]")),
+    optparse::make_option(c("--verbose"), default = FALSE, action = "store_true")
+  )
+)
+
+
+signal_parser <- optparse::OptionParser(
+  option_list = list(
+    optparse::make_option(c("-i", "--input"), help = "Path to the input file. If there are multiple input files, they should be separated by colons"),
+    optparse::make_option(c("--hotspot"), help = "Path to the hotspot file"),
+    optparse::make_option(c("-o", "--output"), type = "character", help = "Path to output file"),
+    optparse::make_option(c("--genome"), type = "character", help = "Genome of the input"),
+    optparse::make_option(
+      c("-g", "--gc-correct"),
+      default = FALSE,
+      action = "store_true",
+      help = "Whether to perform GC correction"
+    ),
+    optparse::make_option(
+      c("--gc-correct-method"),
+      default = "standard",
+      help = "Methods used in GC correction. Should be either standard or caret [standard]"
+    ),
+    optparse::make_option(
+      c("--gc-correct-n"),
+      default = 1e6L,
+      help = "Maximal sample size for GC correction model training [1e6L]"
+    ),
+    optparse::make_option(
+      c("-m", "--high-mappability"),
+      type = "character",
+      help = "Path to the mappability file. Default is NULL, i.e. do NOT exclude fragments from low-mappability regions"
+    ),
+    optparse::make_option(
+      c("--chrom"),
+      type = "character",
+      default = NULL,
+      help = "Perform the analysis only for a selected group of chromosomes. Separated by colons, such as 12:16:X. If not provided, all chromosomes found in the input file will be used"
+    ),
+    optparse::make_option(
+      c("--exclude-chrom"),
+      type = "character",
+      default = NULL,
+      help = "Exclude chromosomes from the analysis. Separated by colons, such as 12:16:X"
+    ),
+    optparse::make_option(c("--min-mapq"),
+                          default = 30L,
+                          help = "Minimal MAPQ for fragments included in the analysis"),
+    optparse::make_option(c("--min-fraglen"),
+                          default = 50L,
+                          help = "Minimal length for fragments included in the analysis"),
+    optparse::make_option(c("--max-fraglen"),
+                          default = 1000L,
+                          help = "Maximal length for fragments included in the analysis"),
+    optparse::make_option(
+      c("--exclude-region"),
+      type = "character",
+      default = NULL, # "encode.blacklist.hs37-1kg",
+      help = "BED files defining regions to be excluded from the analysis, separated by colon. Default is the ENCODE Blacklist: https://www.nature.com/articles/s41598-019-45839-z, which is included in this R package"
+    ),
+    optparse::make_option(
+      c("--exclude-soft-clipping"),
+      action = "store_true",
+      default = FALSE,
+      help = "Exclude fragments with leading soft-clipping from the analysis"
+    ),
+    optparse::make_option(
+      c("-w", "--window-size"),
+      default = 2000L,
+      help = "Size of the sliding window [2000]"
+    ),
+    # optparse::make_option(c("-s", "--step-size"), default = 20L, help = "Step size of the sliding window [20]"),
+    optparse::make_option(c("-t", "--thread", default = 1L, help = "Number of threads [1]")),
+    optparse::make_option(c("--verbose"), default = FALSE, action = "store_true")
+  )
+)
+
+
+
 parse_script_args <- function() {
   if (interactive()) {
     script_args <- get0("script_args")
     subcommand <- get0("subcommand")
     
-    if (is.null(script_args) || is.null(subcommand))
+    if (is_null(script_args) || is_null(subcommand))
       stop()
     else {
       return(list(subcommand, script_args))
@@ -41,95 +232,21 @@ parse_script_args <- function() {
     # * hotspot: only call hotspots from a existing IFS score track
     args <- commandArgs(trailingOnly = TRUE)
     subcommand <- args[1]
-    args <- args[-1]
     
     if (!subcommand %in% c("ifs", "peak", "signal"))
       stop("Subcommand should be one of the following: ifs, peak, hotspot, signal")
     
-    # Run in CLI script mode
-    parser <- optparse::OptionParser(
-      option_list = list(
-        optparse::make_option(c("-i", "--input"), help = "Path to the input file. If there are multiple input files, they should be separated by colons"),
-        optparse::make_option(c("-o", "--output"), type = "character", help = "Path to output file"),
-        # optparse::make_option(c("--output-hotspot"), type = "character", help = "Directory for hotspot output"),
-        optparse::make_option(c("--genome"), type = "character", help = "Genome of the input"),
-        optparse::make_option(
-          c("-g", "--gc-correct"),
-          default = FALSE,
-          action = "store_true",
-          help = "Whether to perform GC correction"
-        ),
-        optparse::make_option(
-          c("--gc-correct-method"),
-          default = "standard",
-          help = "Methods used in GC correction. Should be either standard or caret [standard]"
-        ),
-        optparse::make_option(
-          c("--gc-correct-n"),
-          default = 1e6L,
-          help = "Maximal sample size for GC correction model training [1e6L]"
-        ),
-        optparse::make_option(
-          c("-m", "--high-mappability"),
-          type = "character",
-          help = "Path to the mappability file. Default is NULL, i.e. do NOT exclude fragments from low-mappability regions"
-        ),
-        optparse::make_option(
-          c("--chrom"),
-          type = "character",
-          default = NULL,
-          help = "Perform the analysis only for a selected group of chromosomes. Separated by colons, such as 12:16:X. If not provided, all chromosomes found in the input file will be used"
-        ),
-        optparse::make_option(
-          c("--exclude-chrom"),
-          type = "character",
-          default = NULL,
-          help = "Exclude chromosomes from the analysis. Separated by colons, such as 12:16:X"
-        ),
-        optparse::make_option(c("--min-mapq"),
-                              default = 30L,
-                              help = "Minimal MAPQ for fragments included in the analysis"),
-        optparse::make_option(c("--min-fraglen"),
-                              default = 50L,
-                              help = "Minimal length for fragments included in the analysis"),
-        optparse::make_option(c("--max-fraglen"),
-                              default = 1000L,
-                              help = "Maximal length for fragments included in the analysis"),
-        optparse::make_option(
-          c("--exclude-region"),
-          type = "character",
-          default = NULL, # "encode.blacklist.hs37-1kg",
-          help = "BED files defining regions to be excluded from the analysis, separated by colon. Default is the ENCODE Blacklist: https://www.nature.com/articles/s41598-019-45839-z, which is included in this R package"
-        ),
-        optparse::make_option(
-          c("--exclude-soft-clipping"),
-          action = "store_true",
-          default = FALSE,
-          help = "Exclude fragments with leading soft-clipping from the analysis"
-        ),
-        optparse::make_option(
-          c("-w", "--window-size"),
-          default = 200L,
-          help = "Size of the sliding window [200]"
-        ),
-        optparse::make_option(c("-s", "--step-size"), default = 20L, help = "Step size of the sliding window [20]"),
-        # optparse::make_option(
-        #   c("--cpois"),
-        #   action = "store_true",
-        #   default = FALSE,
-        #   help = "Use continuous Poisson model to call hotspots"
-        # ),
-        # optparse::make_option(c("--merge-distance"), default = 200L),
-        # optparse::make_option(c("--fdr"), default = 0.2, help = "FDR cut-off value used in hotspot calling. Default is 0.2"),
-        # optparse::make_option(c("--pval"), default = 1e-5, help = "Threshold for p-values to call hotspots. Default is 1e-5"),
-        # optparse::make_option(c("--hotspot-method"), default = "pois"),
-        optparse::make_option(c("--signal"), help = "The signal BED file"),
-        optparse::make_option(c("--signal-hw"), default = 1000L),
-        optparse::make_option(c("-t", "--thread", default = 1L, help = "Number of threads [1]")),
-        optparse::make_option(c("--verbose"), default = FALSE, action = "store_true")
-      )
-    )
+    if (is_true(subcommand == "ifs")) {
+      parser <- ifs_parser
+    } else if (is_true(subcommand == "peak")) {
+      parser <- peak_parser
+    } else if (is_true(subcommand == "signal")) {
+      parser <- signal_parser
+    } else {
+      stop("Subcommand should be one of the following: ifs, peak, hotspot, signal")
+    }
     
+    args <- args[-1]
     script_args <-
       optparse::parse_args(parser,
                            args = args,
@@ -147,10 +264,9 @@ parse_script_args <- function() {
     if (!("chrom" %in% names(script_args)))
       script_args$chrom <- NULL
     
-    
     c("chrom", "exclude_chrom", "exclude_region") %>%
       walk(function(arg) {
-        if (!is.null(script_args[[arg]])) {
+        if (!is_null(script_args[[arg]])) {
           script_args[[arg]] <<-
             str_split(script_args[[arg]], pattern = "[:,]")[[1]]
         }
@@ -166,7 +282,7 @@ parse_script_args <- function() {
           script_args[[arg]] <<- as.numeric(script_args[[arg]])
       })
     
-    if (script_args$window_size %% script_args$step_size != 0)
+    if (is_true(script_args$window_size %% script_args$step_size != 0))
       stop("window_size must be multiples of step_size")
     
     # genome must be hs37-1kg
@@ -289,25 +405,6 @@ subcommand_ifs <- function(script_args) {
       }
     }
     
-    # # Apply filters
-    # min_mapq <- as.integer(script_args$min_mapq)
-    # if (isTRUE(min_mapq > 0) && "mapq" %in% colnames(GenomicRanges::mcols(frag))) {
-    #   frag <- frag[frag$mapq >= min_mapq]
-    # }
-    #
-    # logging::loginfo("Applying fragment length filter ...")
-    # min_fraglen <- as.integer(script_args$min_fraglen) %||% 0
-    # max_fraglen <- as.integer(script_args$max_fraglen) %||% Inf
-    # frag <-
-    #   frag[between(GenomicRanges::width(frag), min_fraglen, max_fraglen)]
-    #
-    # if (script_args$exclude_soft_clipping &&
-    #     all(c("cigar1", "cigar2") %in% colnames(GenomicRanges::mcols(frag)))) {
-    #   logging::loginfo("Applying fragment CIGAR filter ...")
-    #   frag <- frag[!grepl(pattern = "^[0-9]+S", x = frag$cigar1) &
-    #                  !grepl(pattern = "[0-9]+S$", x = frag$cigar2)]
-    # }
-    
     frag
   }) %>% do.call(c, args = .)
   
@@ -330,8 +427,6 @@ subcommand_ifs <- function(script_args) {
     max_fraglen = script_args$max_fraglen,
     exclude_soft_clipping = script_args$exclude_soft_clipping
   )
-  
-  rm(frag)
   
   ifs <- result$ifs
   avg_len <- result$avg_len
@@ -409,80 +504,99 @@ subcommand_peak <- function(script_args) {
   write_ifs_as_bedgraph(ifs, script_args, comments)
 }
 
-# subcommand_hotspot <- function(script_args) {
-#   # Determine chroms
-#   chroms <- system(paste0("tabix -l ", script_args$input), intern = TRUE)
-#   hotspot_list <- chroms %>%
-#     map(function(chrom) {
-#       # Load IFS score from input file
-#       logging::loginfo(str_interp("Loading IFS scores: ${script_args$input} ..."))
-#       ifs <-
-#         bedtorch::read_bed(script_args$input,
-#                            genome = script_args$genome,
-#                            range = chrom)
-#       # Convert bedGraph to bed
-#       GenomicRanges::start(ifs) <-
-#         GenomicRanges::start(ifs) - (script_args$window_size - script_args$step_size) /
-#         2
-#       GenomicRanges::width(ifs) <- script_args$window_size
-#
-#       logging::loginfo("IFS summary:")
-#       print(ifs)
-#
-#       call_hotspot(
-#         ifs,
-#         fdr_cutoff = script_args$fdr,
-#         pval_cutoff = script_args$pval,
-#         local_pval_cutoff = script_args$pval,
-#         method = script_args$hotspot_method
-#       )
-#     })
-#
-#   hotspot_standard <- do.call(c, args = hotspot_list)
-#
-#   if (is.null(hotspot_standard)) {
-#     logging::loginfo("Called 0 hotspots")
-#     # Write an empty file anyway. This is useful when you want to use snakemake
-#     # and cragr together
-#     system(str_interp("touch ${script_args$output}"))
-#   } else {
-#     n_hotspot <- length(hotspot_standard)
-#     logging::loginfo(str_interp("Called ${n_hotspot} hotspots"))
-#     logging::loginfo("Writing results to disk ...")
-#     bedtorch::write_bed(hotspot_standard,
-#                         file_path = script_args$output,
-#                         comments = comments)
-#   }
-# }
-
 
 # Perform signal-level analysis
 subcommand_signal <- function(script_args) {
-  hotspot <- bedtorch::read_bed(script_args$input)
-  # %>% bedtorch::merge_bed(max_dist = script_args$merge_distance)
+  # Make sure the genome is available
+  bsgenome <- switch(
+    script_args$genome,
+    "GRCh37" = "BSgenome.Hsapiens.1000genomes.hs37d5",
+    "hs37-1kg" = "BSgenome.Hsapiens.1000genomes.hs37d5",
+    "GRCh38" = "BSgenome.Hsapiens.NCBI.GRCh38",
+    stop(paste0("Invalid genome: ", genome_name))
+  )
+  assertthat::assert_that(requireNamespace(bsgenome), msg = str_interp("${bsgenome} is required"))
   
-  logging::loginfo("Loading signal file ...")
-  signal <- unique(GenomicRanges::seqnames(hotspot)) %>%
-    map(function(chrom) {
-      ## Increase hotspot
-      hotspot <- hotspot[GenomicRanges::seqnames(hotspot) == chrom]
-      hotspot_start <- pmax(GenomicRanges::start(hotspot) - script_args$signal_hw, 1)
-      hotspot_end <- GenomicRanges::end(hotspot) + script_args$signal_hw
-      GenomicRanges::ranges(hotspot) <-
-        IRanges::IRanges(start = hotspot_start, end = hotspot_end)
+  if (script_args$gc_correct) {
+    logging::loginfo("Perform GC correction ...")
+    # Calculate IFS scores as usual, which is used to get the GC-correction model
+    frag <- script_args$input %>% map(function(input_file) {
+      if (!is_null(script_args$chrom)) {
+        frag <-
+          read_fragments(
+            input_file,
+            range = setdiff(script_args$chrom, script_args$exclude_chrom),
+            genome = script_args$genome
+          )
+      } else {
+        frag <- read_fragments(input_file, genome = script_args$genome)
+        if (!is_null(script_args$exclude_chrom)) {
+          frag <-
+            frag[!GenomicRanges::seqnames(frag) %in% script_args$exclude_chrom]
+        }
+      }
       
-      signal <- bedtorch::read_bed(script_args$signal, range = chrom)
-      GenomeInfoDb::seqlevels(signal) <- GenomeInfoDb::seqlevels(hotspot)
-      hits <- GenomicRanges::findOverlaps(signal, hotspot)
-      signal[unique(S4Vectors::queryHits(hits))]
-    }) %>%
-    do.call(c, args = .)
+      frag
+    }) %>% do.call(c, args = .)
+    
+    frag <- sort(frag)
+    
+    result <- ifs_score(
+      frag,
+      window_size = script_args$window_size,
+      step_size = script_args$window_size,
+      gc_correct = script_args$gc_correct,
+      blacklist_region = script_args$exclude_region,
+      high_mappability_region = script_args$high_mappability,
+      min_mapq = script_args$min_mapq,
+      min_fraglen = script_args$min_fraglen,
+      max_fraglen = script_args$max_fraglen,
+      exclude_soft_clipping = script_args$exclude_soft_clipping
+    )
+    ifs <- result$ifs
+    ifs <- calc_gc(ifs)
+    gc_result <-
+      gc_correct(
+        ifs,
+        span = 0.75,
+        method = script_args$gc_correct_method,
+        max_training_dataset = script_args$gc_correct_n,
+        thread = script_args$thread,
+        return_model = TRUE
+      )
+    gc_model <- gc_result$model
+  } else {
+    gc_model <- NULL
+  }
   
-  logging::loginfo("Calculating signal profile over hotspots ...")
-  result <- signal_level_analysis(hotspot = hotspot, signal = signal, half_width = script_args$signal_hw)
+  hotspot <- bedtorch::read_bed(script_args$hotspot, genome = script_args$genome)
+  hotspot <- GenomicRanges::resize(hotspot, width = script_args$window_size, fix = "center")
+  result <- ifs_score(
+    frag,
+    interval = hotspot,
+    window_size = NULL,
+    step_size = NULL,
+    gc_correct = script_args$gc_correct,
+    blacklist_region = script_args$exclude_region,
+    high_mappability_region = script_args$high_mappability,
+    min_mapq = script_args$min_mapq,
+    min_fraglen = script_args$min_fraglen,
+    max_fraglen = script_args$max_fraglen,
+    exclude_soft_clipping = script_args$exclude_soft_clipping
+  )
+  ifs2 <- result$ifs
+  ifs2 <- calc_gc(ifs2)
+  ifs2$score0 <- ifs2$score
   
-  logging::loginfo("Writing results to disk ...")
-  readr::write_tsv(result, file = script_args$output)
+  na_idx <- is.na(ifs2$gc)
+  pred <-
+    predict(gc_model, newdata = data.frame(gc = ifs2$gc[!na_idx]))
+  ifs2$score <- NA
+  ifs2$score[!na_idx] <-
+    pmax(0, ifs2$score0[!na_idx] - pred + mean(ifs2$score0, na.rm = TRUE))
+  ifs2$score[ifs2$score < 0] <- 0
+  
+  bedtorch::write_bed(ifs2, file_path = script_args$output, comments = comments)
 }
 
 # Main ----
@@ -524,7 +638,7 @@ comments <- c(
   # All items in script_args
   names(script_args) %>% purrr::map_chr(function(name) {
     v <- script_args[[name]]
-    v_str <- if (!is.null(v))
+    v_str <- if (!is_null(v))
       v %>% purrr::map_chr(as.character) %>% paste(collapse = ":")
     else
       ""

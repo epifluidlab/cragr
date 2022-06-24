@@ -88,9 +88,34 @@ preprocess_fragment <-
 
 # Calculate raw IFS scores, i.e. the ones before GC-correction
 calculate_raw_ifs <-
-  function(fragment_data, window_size, step_size) {
+  function(fragment_data, window_size, step_size, interval = NULL) {
     # Get coverage and calcuate IFS score for each 20bp (step-size) window
     logging::loginfo("Calculating raw IFS scores ...")
+
+    if (!is_null(interval)) {
+      # Calcualte IFS scores over known intervals
+      interval <- bedtorch::as.GenomicRanges(interval)
+      fragment_data <- bedtorch::as.GenomicRanges(fragment_data)
+      avg_len <- mean(fragment_data$length)
+      
+      hits <- GenomicRanges::findOverlaps(interval, fragment_data)
+      cov <- tapply(fragment_data$length[hits@to], INDEX = hits@from, FUN = length, simplify = TRUE)
+      sum_len <- tapply(fragment_data$length[hits@to], INDEX = hits@from, FUN = sum, simplify = TRUE)
+      stopifnot(length(cov) == length(sum_len))
+      
+      ifs <- interval
+      ifs$cov <- 0
+      ifs$sum_len <- NA
+      ifs[as.integer(names(cov))]$cov <- cov
+      ifs[as.integer(names(sum_len))]$sum_len <- sum_len
+      
+      GenomicRanges::mcols(ifs) <- data.table::data.table(
+        score = ifs$cov + ifs$sum_len / avg_len,
+        cov = ifs$cov,
+        frag_len = ifs$sum_len / ifs$cov
+      )
+      return(ifs)
+    }
 
     # Here we need do grouping and aggregating.
     # It seems data.table is way faster
@@ -121,6 +146,12 @@ calculate_raw_ifs <-
     ifs %<>% bedtorch::as.bedtorch_table(genome = attr(fragment_data, "genome"))
     data.table::setkeyv(ifs, c("chrom", "start", "end"))
 
+    if (is_null(window_size) || is_true(window_size == step_size)) {
+      # Useful in scenarios when you want to calculate IFS scores over certain
+      # known intervals, such as IFS-over-hotspot.
+      return(bedtorch::as.GenomicRanges(ifs))
+    }
+
     logging::logdebug("Applying rollmean")
     # Perform rolling sum over the sliding windows, therefore we have results
     # for rolling windows (200bp, window_size) at step size of (20bp, step_size)
@@ -132,7 +163,7 @@ calculate_raw_ifs <-
       )
 
     # ifs[, avg_len := avg_len]
-    return(ifs)
+    return(bedtorch::as.GenomicRanges(ifs))
   }
 
 
@@ -142,6 +173,7 @@ calculate_raw_ifs <-
 #' mappability filtering.
 #'
 #' @param fragment_data A `GRanges` data frame containing cfDNA fragment data.
+#' @param interval Intervals against which IFS scores should be calculated
 #' @param chrom Calculate IFS scores for certain chromosomes. If `NULL`, all
 #'   chromosomes in `fragment_data` will be used.
 #' @param window_size Width of the sliding window. Must be multiples of
@@ -169,6 +201,7 @@ calculate_raw_ifs <-
 #' @export
 ifs_score <-
   function(fragment_data,
+           interval = NULL,
            chrom = NULL,
            window_size = 200L,
            step_size = 20L,
@@ -180,38 +213,25 @@ ifs_score <-
            max_fraglen = 1000L,
            exclude_soft_clipping = FALSE) {
     stopifnot(is(fragment_data, "GRanges"))
-    assertthat::are_equal(window_size %% step_size, 0)
-    # assertthat::assert_that(!is.null(high_mappability_region))
+    
+    if (is_null(interval)) {
+      assertthat::are_equal(window_size %% step_size, 0)
+    }
 
-    if (is.null(chrom)) {
+    if (is_null(chrom)) {
       chrom <- as.character(unique(seqnames(fragment_data)))
     } else {
       chrom <- as.character(chrom)
     }
-
-    assertthat::assert_that(length(chrom) == 1)
-    # if (length(chrom) > 1) {
-    #   # For multiple chromosomes, sequentially
-    #   ifs <-
-    #     chrom %>%
-    #     map(function(chrom) {
-    #       ifs_score(
-    #         fragment_data,
-    #         chrom = chrom,
-    #         window_size = window_size,
-    #         step_size = step_size,
-    #         gc_correct = gc_correct,
-    #         blacklist_region = blacklist_region,
-    #         high_mappability_region = high_mappability_region,
-    #         min_mapq = min_mapq,
-    #         min_fraglen = min_fraglen,
-    #         max_fraglen = max_fraglen,
-    #         exclude_soft_clipping = exclude_soft_clipping
-    #       )
-    #     }) %>%
-    #     do.call(c, args = .)
-    #   return(ifs)
-    # }
+    
+    if (!is_null(interval)) {
+      # Only process the intersect
+      chrom <- base::intersect(chrom, GenomicRanges::seqnames(interval))
+      assertthat::assert_that(length(chrom) == 1)
+      interval <- interval[GenomicRanges::seqnames(interval) == chrom]
+    } else {
+      assertthat::assert_that(length(chrom) == 1)
+    }
 
     fragment_data <-
       preprocess_fragment(
@@ -228,14 +248,13 @@ ifs_score <-
 
     avg_len <- mean(fragment_data$length)
     frag_cnt <- length(fragment_data$length)
+    
+    log_mem("Done calculating raw IFS")
     ifs <-
       calculate_raw_ifs(fragment_data,
+                        interval = interval,
                         window_size = window_size,
-                        step_size = step_size
-      )
-    ifs <- bedtorch::as.GenomicRanges(ifs)
-
-    log_mem("Done calculating raw IFS")
+                        step_size = step_size)
 
     # Exclude low-mappability regions
     if (!is_null(high_mappability_region)) {
@@ -339,15 +358,21 @@ calc_gc <- function(ifs) {
 #'   do the training.
 #' @param method If `standard`, the built-in `loess` function will be used for the calculation. If `caret`, will use `gamLOESS`
 #' @export
-gc_correct <- function(ifs, span = 0.75, max_training_dataset = 1e6L, method = "standard", ...) {
-  if (method == "standard") {
-    return(gc_correct_standard(ifs, span, max_training_dataset, ...))
-  } else if (method == "caret") {
-    return(gc_correct_caret(ifs, span, max_training_dataset, ...))
-  } else {
-    stop(paste0("Unsupported method: ", method))
+gc_correct <-
+  function(ifs,
+           span = 0.75,
+           max_training_dataset = 1e6L,
+           method = "standard",
+           return_model = FALSE,
+           ...) {
+    if (method == "standard") {
+      return(gc_correct_standard(ifs, span, max_training_dataset, return_model, ...))
+    } else if (method == "caret") {
+      return(gc_correct_caret(ifs, span, max_training_dataset, return_model, ...))
+    } else {
+      stop(paste0("Unsupported method: ", method))
+    }
   }
-}
 
 
 gc_correct_caret <-
@@ -355,6 +380,7 @@ gc_correct_caret <-
            span = 0.75,
            max_training_dataset = 1e6L,
            thread = 1L,
+           return_model = FALSE,
            ...) {
     assertthat::are_equal(length(unique(seqnames(ifs))), 1)
     assertthat::assert_that("gc" %in% colnames(mcols(ifs)))
@@ -416,7 +442,15 @@ gc_correct_caret <-
       ifs <- ifs[!na_score_idx]
     }
     logging::loginfo("Finished performing GC correction")
-    ifs
+    
+    if (is_true(return_model)) {
+      return(list(
+        ifs = ifs,
+        model = model
+      ))
+    } else {
+      return(ifs)
+    }
   }
 
 
@@ -424,6 +458,7 @@ gc_correct_standard <-
   function(ifs,
            span = 0.75,
            max_training_dataset = 1e6L,
+           return_model = FALSE,
            ...) {
     assertthat::are_equal(length(unique(seqnames(ifs))), 1)
     assertthat::assert_that("gc" %in% colnames(mcols(ifs)))
@@ -481,7 +516,15 @@ gc_correct_standard <-
       ifs <- ifs[!na_score_idx]
     }
     logging::loginfo("Finished performing GC correction")
-    ifs
+    
+    if (is_true(return_model)) {
+      return(list(
+        ifs = ifs,
+        model = model
+      ))
+    } else {
+      return(ifs)
+    }
   }
 
 
