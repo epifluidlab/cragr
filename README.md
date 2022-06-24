@@ -6,13 +6,13 @@ cragr is an R package for CRAG (**C**ell f**R**ee dn**A** fra**G**mentation) ana
 
 Cite our paper:
 
-Zhou, X., & Liu, Y. (2020). De novo characterization of cell-free DNA fragmentation hotspots boosts the power for early detection and localization of multi-cancer. _bioRxiv_.
+Zhou, X., & Liu, Y. (2020). De novo characterization of cell-free DNA fragmentation hotspots boosts the power for early detection and localization of multi-cancer. _bioRxiv_. [https://doi.org/10.1101/2020.07.16.201350](https://doi.org/10.1101/2020.07.16.201350)
 
 ## Installation
 
 System requirements:
 
-- R 4.x
+- >= R 4.1.x
 - tabix and bgzip (included in htslib: [http://www.htslib.org/download/](http://www.htslib.org/download/))
 - bedtools ([https://bedtools.readthedocs.io/en/latest/](https://bedtools.readthedocs.io/en/latest/))
 
