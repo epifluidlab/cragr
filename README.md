@@ -108,8 +108,19 @@ Finally, the hotspot regions can be called from IFS scores:
     zcat ifs.bedGraph.gz |
     awk -F'\t' -v OFS="\t" 'substr($1,1,1)!="#" && $17<=0.2 && $17!="."' |
     bedtools slop -g inst/extdata/human_g1k_v37.chrom.sizes -i - -b 90 -header |
-    bedtools merge -header -i - -d 200 |
+    bedtools merge -header -i - -d 200 -c 17 -o min |
     bgzip >> hotspot.bed.gz
+
+The hotspot BED file contains fourth columns as shown below:
+
+```
+22      16077180        16077500        0.04534177218
+22      16078380        16078920        0.05546186323
+22      16079260        16079740        0.05591242971
+22      16080180        16080380        0.07216067306
+```
+
+The fourth column is the FDR (BH-corrected) associated with the hotspot. Lower values indicate more significant hotspots.
 
 ### Run with snakemake
 
