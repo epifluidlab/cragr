@@ -517,29 +517,31 @@ subcommand_signal <- function(script_args) {
   )
   assertthat::assert_that(requireNamespace(bsgenome), msg = str_interp("${bsgenome} is required"))
   
+  logging::loginfo("Loading fragment files ...")
+  # Calculate IFS scores as usual, which is used to get the GC-correction model
+  frag <- script_args$input %>% map(function(input_file) {
+    if (!is_null(script_args$chrom)) {
+      frag <-
+        read_fragments(
+          input_file,
+          range = setdiff(script_args$chrom, script_args$exclude_chrom),
+          genome = script_args$genome
+        )
+    } else {
+      frag <- read_fragments(input_file, genome = script_args$genome)
+      if (!is_null(script_args$exclude_chrom)) {
+        frag <-
+          frag[!GenomicRanges::seqnames(frag) %in% script_args$exclude_chrom]
+      }
+    }
+    
+    frag
+  }) %>% do.call(c, args = .)
+  
+  frag <- sort(frag)
+  
   if (script_args$gc_correct) {
     logging::loginfo("Perform GC correction ...")
-    # Calculate IFS scores as usual, which is used to get the GC-correction model
-    frag <- script_args$input %>% map(function(input_file) {
-      if (!is_null(script_args$chrom)) {
-        frag <-
-          read_fragments(
-            input_file,
-            range = setdiff(script_args$chrom, script_args$exclude_chrom),
-            genome = script_args$genome
-          )
-      } else {
-        frag <- read_fragments(input_file, genome = script_args$genome)
-        if (!is_null(script_args$exclude_chrom)) {
-          frag <-
-            frag[!GenomicRanges::seqnames(frag) %in% script_args$exclude_chrom]
-        }
-      }
-      
-      frag
-    }) %>% do.call(c, args = .)
-    
-    frag <- sort(frag)
     
     result <- ifs_score(
       frag,
@@ -588,13 +590,15 @@ subcommand_signal <- function(script_args) {
   ifs2 <- calc_gc(ifs2)
   ifs2$score0 <- ifs2$score
   
-  na_idx <- is.na(ifs2$gc)
-  pred <-
-    predict(gc_model, newdata = data.frame(gc = ifs2$gc[!na_idx]))
-  ifs2$score <- NA
-  ifs2$score[!na_idx] <-
-    pmax(0, ifs2$score0[!na_idx] - pred + mean(ifs2$score0, na.rm = TRUE))
-  ifs2$score[ifs2$score < 0] <- 0
+  if (script_args$gc_correct) {
+    na_idx <- is.na(ifs2$gc)
+    pred <-
+      predict(gc_model, newdata = data.frame(gc = ifs2$gc[!na_idx]))
+    ifs2$score <- NA
+    ifs2$score[!na_idx] <-
+      pmax(0, ifs2$score0[!na_idx] - pred + mean(ifs2$score0, na.rm = TRUE))
+    ifs2$score[ifs2$score < 0] <- 0
+  }
   
   bedtorch::write_bed(ifs2, file_path = script_args$output, comments = comments)
 }

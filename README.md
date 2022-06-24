@@ -125,7 +125,7 @@ The fourth column is the FDR (BH-corrected) associated with the hotspot. Lower v
 ### Calculate IFS scores over hotspots
 
 ```
-Rscript $HOME/dev/cragr/inst/extdata/scripts/cragr.R signal \
+Rscript cragr.R signal \
 -i frag.bed.gz \
 --hotspot hotspot.bed.gz \
 -o ifs_hotspot.bed.gz \
