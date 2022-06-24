@@ -18,7 +18,7 @@ System requirements:
 
 Recommended installation steps:
 
-1. Install R devtools: `install.packages(“devtools”)`
+1. Install R devtools: `install.packages("devtools")`
 2. Install cragr: `devtools::install_github("epifluidlab/cragr")`
 
 ## Getting started
