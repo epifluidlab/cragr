@@ -12,7 +12,7 @@ Zhou, X., & Liu, Y. (2020). De novo characterization of cell-free DNA fragmentat
 
 System requirements:
 
-- >= R 4.1.x
+- R 4.1.x or higher
 - tabix and bgzip (included in htslib: [http://www.htslib.org/download/](http://www.htslib.org/download/))
 - bedtools ([https://bedtools.readthedocs.io/en/latest/](https://bedtools.readthedocs.io/en/latest/))
 
