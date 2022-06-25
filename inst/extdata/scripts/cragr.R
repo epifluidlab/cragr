@@ -6,26 +6,6 @@ stop_quietly <- function() {
 
 library(rlang)
 
-# Example
-# subcommand <- "ifs"
-# script_args <- list(
-#   input = "frag/nature_bile.frag.bed.gz",
-#   output = "output.bed.gz",
-#   gc_correct = TRUE,
-#   genome = "hs37-1kg",
-#   high_mappability = "data/mappability.hs37-1kg.w200.s20.0_9.bed.gz",
-#   chrom = "21",
-#   excluded_chrom = NULL,
-#   min_mapq = 30L,
-#   min_fraglen = 50L,
-#   max_fraglen = 1000L,
-#   exclude_region = "encode.blacklist.hs37-1kg",
-#   exclude_soft_clipping = FALSE,
-#   window_size = 200L,
-#   step_size = 20L
-# )
-
-
 ifs_parser <- optparse::OptionParser(
   option_list = list(
     optparse::make_option(opt_str = c("-i", "--input"),
@@ -56,12 +36,6 @@ ifs_parser <- optparse::OptionParser(
       type = "character",
       help = "Perform the analysis for the specified chromosome."
     ),
-    # optparse::make_option(
-    #   c("--exclude-chrom"),
-    #   type = "character",
-    #   default = NULL,
-    #   help = "Exclude chromosomes from the analysis. Separated by colons, such as 12:16:X"
-    # ),
     optparse::make_option(c("--min-mapq"),
                           default = 30L,
                           help = "Minimal MAPQ for fragments included in the analysis."),
@@ -123,12 +97,6 @@ peak_parser <- optparse::OptionParser(
       default = NULL,
       help = "Perform the analysis only for a selected group of chromosomes. Separated by colons, such as 12:16:X. If not provided, all chromosomes found in the input file will be used"
     ),
-    # optparse::make_option(
-    #   c("--exclude-chrom"),
-    #   type = "character",
-    #   default = NULL,
-    #   help = "Exclude chromosomes from the analysis. Separated by colons, such as 12:16:X"
-    # ),
     optparse::make_option(
       c("-w", "--window-size"),
       default = 200L,
@@ -174,12 +142,6 @@ signal_parser <- optparse::OptionParser(
       default = NULL,
       help = "Perform the analysis only for a selected group of chromosomes. Separated by colons, such as 12:16:X. If not provided, all chromosomes found in the input file will be used"
     ),
-    # optparse::make_option(
-    #   c("--exclude-chrom"),
-    #   type = "character",
-    #   default = NULL,
-    #   help = "Exclude chromosomes from the analysis. Separated by colons, such as 12:16:X"
-    # ),
     optparse::make_option(c("--min-mapq"),
                           default = 30L,
                           help = "Minimal MAPQ for fragments included in the analysis"),
@@ -263,7 +225,7 @@ parse_script_args <- function() {
     if (!("chrom" %in% names(script_args)))
       script_args$chrom <- NULL
     
-    c("chrom", "exclude_chrom", "exclude_region") %>%
+    c("chrom", "exclude_region") %>%
       walk(function(arg) {
         if (!is_null(script_args[[arg]])) {
           script_args[[arg]] <<-
@@ -356,7 +318,6 @@ log_mem <- function(label = "Unknown") {
 #   gc_correct = TRUE,
 #   high_mappability = "sandbox/mappability.hs37-1kg.w200.s20.0_9.bed.gz",
 #   chrom = NULL,
-#   exclude_chrom = NULL,
 #   min_mapq = 30L,
 #   min_fraglen = 50L,
 #   max_fraglen = 1000L,
@@ -394,14 +355,11 @@ subcommand_ifs <- function(script_args) {
       frag <-
         read_fragments(
           input_file,
-          range = setdiff(script_args$chrom, script_args$exclude_chrom),
+          range = script_args$chrom,
           genome = script_args$genome
         )
     } else {
       frag <- read_fragments(input_file, genome = script_args$genome)
-      if (!is_null(script_args$exclude_chrom)) {
-        frag <- frag[!GenomicRanges::seqnames(frag) %in% script_args$exclude_chrom]
-      }
     }
     
     frag
@@ -527,15 +485,11 @@ subcommand_signal <- function(script_args) {
       frag <-
         read_fragments(
           input_file,
-          range = setdiff(script_args$chrom, script_args$exclude_chrom),
+          range = script_args$chrom,
           genome = script_args$genome
         )
     } else {
       frag <- read_fragments(input_file, genome = script_args$genome)
-      if (!is_null(script_args$exclude_chrom)) {
-        frag <-
-          frag[!GenomicRanges::seqnames(frag) %in% script_args$exclude_chrom]
-      }
     }
     
     frag
@@ -624,7 +578,6 @@ if (interactive()) {
     gc_correct_method = "standard",
     high_mappability = NULL,
     chrom = "17",
-    exclude_chrom = NULL,
     min_mapq = 30L,
     min_fraglen = 50L,
     max_fraglen = 1000L,
