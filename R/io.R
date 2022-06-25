@@ -1,5 +1,5 @@
 #' @export
-read_fragments <- function(file_path, range = NULL, genome = NULL) {
+read_fragments <- function(file_path, range = NULL, genome = NULL, verbose = FALSE) {
   logging::logdebug("Reading BED data")
   frag <- bedtorch::read_bed(
     file_path = file_path,
@@ -25,6 +25,8 @@ read_fragments <- function(file_path, range = NULL, genome = NULL) {
   # Only keep necessary columns
   meta_cols <- base::intersect(names(frag_metadata), c("mapq", "cigar1", "cigar2"))
   mcols(frag) <- frag_metadata[meta_cols]
-  print(frag)
+  if (verbose) {
+    print(frag)
+  }
   frag
 }

@@ -8,8 +8,10 @@ library(rlang)
 
 ifs_parser <- optparse::OptionParser(
   option_list = list(
-    optparse::make_option(opt_str = c("-i", "--input"),
-                          help = "Path to the input fragment file. The file should be in bgzip-compressed BED format, alongside with the .tbi index file."), 
+    optparse::make_option(
+      opt_str = c("-i", "--input"),
+      help = "Path to the input fragment file. The file should be in bgzip-compressed BED format, alongside with the .tbi index file."
+    ),
     optparse::make_option(c("-o", "--output"), type = "character", help = "Path to the output file."),
     optparse::make_option(c("--genome"), type = "character", help = "Which reference genome the input fragment file is based on. Should be either GRCh37 or GRCh38."),
     optparse::make_option(
@@ -24,8 +26,9 @@ ifs_parser <- optparse::OptionParser(
       help = "GC correction method. Should be either standard or caret [standard]."
     ),
     optparse::make_option(c("--gc-correct-n"),
-                          default = 1e6L,
-                          help = "Maximal number of data points for GC correction model training [1000000]."),
+      default = 1e6L,
+      help = "Maximal number of data points for GC correction model training [1000000]."
+    ),
     optparse::make_option(
       c("-m", "--high-mappability"),
       type = "character",
@@ -37,14 +40,17 @@ ifs_parser <- optparse::OptionParser(
       help = "Perform the analysis for the specified chromosome."
     ),
     optparse::make_option(c("--min-mapq"),
-                          default = 30L,
-                          help = "Minimal MAPQ for fragments included in the analysis."),
+      default = 30L,
+      help = "Minimal MAPQ for fragments included in the analysis."
+    ),
     optparse::make_option(c("--min-fraglen"),
-                          default = 50L,
-                          help = "Minimal length for fragments included in the analysis."),
+      default = 50L,
+      help = "Minimal length for fragments included in the analysis."
+    ),
     optparse::make_option(c("--max-fraglen"),
-                          default = 1000L,
-                          help = "Maximal length for fragments included in the analysis."),
+      default = 1000L,
+      help = "Maximal length for fragments included in the analysis."
+    ),
     optparse::make_option(
       c("--exclude-region"),
       type = "character",
@@ -59,11 +65,13 @@ ifs_parser <- optparse::OptionParser(
       help = "Exclude fragments with leading soft-clipping from the analysis"
     ),
     optparse::make_option(c("-w", "--window-size"),
-                          default = 200L,
-                          help = "Size of the sliding window [200]"),
+      default = 200L,
+      help = "Size of the sliding window [200]"
+    ),
     optparse::make_option(c("-s", "--step-size"), default = 20L, help = "Step size of the sliding window [20]"),
     optparse::make_option(c(
-      "-t", "--thread", default = 1L, help = "Number of threads [1]"
+      "-t", "--thread",
+      default = 1L, help = "Number of threads [1]"
     )),
     optparse::make_option(c("--verbose"), default = FALSE, action = "store_true")
   )
@@ -143,14 +151,17 @@ signal_parser <- optparse::OptionParser(
       help = "Perform the analysis only for a selected group of chromosomes. Separated by colons, such as 12:16:X. If not provided, all chromosomes found in the input file will be used"
     ),
     optparse::make_option(c("--min-mapq"),
-                          default = 30L,
-                          help = "Minimal MAPQ for fragments included in the analysis"),
+      default = 30L,
+      help = "Minimal MAPQ for fragments included in the analysis"
+    ),
     optparse::make_option(c("--min-fraglen"),
-                          default = 50L,
-                          help = "Minimal length for fragments included in the analysis"),
+      default = 50L,
+      help = "Minimal length for fragments included in the analysis"
+    ),
     optparse::make_option(c("--max-fraglen"),
-                          default = 1000L,
-                          help = "Maximal length for fragments included in the analysis"),
+      default = 1000L,
+      help = "Maximal length for fragments included in the analysis"
+    ),
     optparse::make_option(
       c("--exclude-region"),
       type = "character",
@@ -180,10 +191,10 @@ parse_script_args <- function() {
   if (interactive()) {
     script_args <- get0("script_args")
     subcommand <- get0("subcommand")
-    
-    if (is_null(script_args) || is_null(subcommand))
+
+    if (is_null(script_args) || is_null(subcommand)) {
       stop()
-    else {
+    } else {
       return(list(subcommand, script_args))
     }
   } else {
@@ -193,10 +204,11 @@ parse_script_args <- function() {
     # * hotspot: only call hotspots from a existing IFS score track
     args <- commandArgs(trailingOnly = TRUE)
     subcommand <- args[1]
-    
-    if (!subcommand %in% c("ifs", "peak", "signal"))
+
+    if (!subcommand %in% c("ifs", "peak", "signal")) {
       stop("Subcommand should be one of the following: ifs, peak, hotspot, signal")
-    
+    }
+
     if (is_true(subcommand == "ifs")) {
       parser <- ifs_parser
     } else if (is_true(subcommand == "peak")) {
@@ -206,25 +218,27 @@ parse_script_args <- function() {
     } else {
       stop("Subcommand should be one of the following: ifs, peak, hotspot, signal")
     }
-    
+
     args <- args[-1]
     script_args <-
       optparse::parse_args(parser,
-                           args = args,
-                           convert_hyphens_to_underscores = TRUE)
-    
+        args = args,
+        convert_hyphens_to_underscores = TRUE
+      )
+
     library(tidyverse)
     library(magrittr)
-    
+
     # Process arguments
     if ("input" %in% names(script_args)) {
       script_args$input <-
         str_split(script_args$input, pattern = ":")[[1]]
     }
-    
-    if (!("chrom" %in% names(script_args)))
+
+    if (!("chrom" %in% names(script_args))) {
       script_args$chrom <- NULL
-    
+    }
+
     c("chrom", "exclude_region") %>%
       walk(function(arg) {
         if (!is_null(script_args[[arg]])) {
@@ -232,20 +246,24 @@ parse_script_args <- function() {
             str_split(script_args[[arg]], pattern = "[:,]")[[1]]
         }
       })
-    
-    c("min_mapq",
+
+    c(
+      "min_mapq",
       "min_fraglen",
       "max_fraglen",
       "window_size",
-      "step_size") %>%
+      "step_size"
+    ) %>%
       walk(function(arg) {
-        if (!is_null(script_args) && arg %in% names(script_args))
+        if (!is_null(script_args) && arg %in% names(script_args)) {
           script_args[[arg]] <<- as.numeric(script_args[[arg]])
+        }
       })
-    
-    if (is_true(script_args$window_size %% script_args$step_size != 0))
+
+    if (is_true(script_args$window_size %% script_args$step_size != 0)) {
       stop("window_size must be multiples of step_size")
-    
+    }
+
     # genome must be hs37-1kg
     assertthat::assert_that(
       is_scalar_character(script_args$genome) &&
@@ -254,9 +272,9 @@ parse_script_args <- function() {
     # if (script_args$genome != "hs37-1kg") {
     #   stop("Currently, only genome hs37-1kg is supported")
     # }
-    
+
     # assertthat::assert_that(script_args$hotspot_method %in% c("pois", "nb"))
-    
+
     return(list(subcommand, script_args))
   }
 }
@@ -285,25 +303,26 @@ write_ifs_as_bedgraph <- function(ifs, script_args, comments) {
   # 5:    21 10873250 10873270 73.56209  33   0.9200000 0.510 63.87727      37.78962 1.0000000           1  1.0000000                 1
   ws_ratio <- script_args$window_size %/% script_args$step_size
   offset <- as.integer((ws_ratio - 1) / 2 * script_args$step_size)
-  
+
   GenomicRanges::start(ifs) <- GenomicRanges::start(ifs) + offset
   GenomicRanges::width(ifs) <- script_args$step_size
-  
+
   # # Rearrage orders
   # df <- GenomicRanges::mcols(ifs) %>%
   #   as_tibble() %>%
   #   relocate(c(z_score, score), .after = end) %>% select(-gc, -mappability)
   # GenomicRanges::mcols(ifs) <- df
-  
+
   bedtorch::write_bed(ifs,
-                      file_path = script_args$output,
-                      comments = comments)
+    file_path = script_args$output,
+    comments = comments
+  )
 }
 
 
 log_mem <- function(label = "Unknown") {
   if (requireNamespace("lobstr")) {
-    mem <- as.numeric(lobstr::mem_used()) / 1024 ** 2
+    mem <- as.numeric(lobstr::mem_used()) / 1024**2
     logging::logdebug(str_interp("[${label}] Memory used: ${mem} MB"))
   }
 }
@@ -337,74 +356,56 @@ log_mem <- function(label = "Unknown") {
 # 3. Calculate GC content for each fragment
 subcommand_ifs <- function(script_args) {
   logging::loginfo("Input: fragment data")
-  
+
   # Make sure the genome is available
-  bsgenome <- switch(
-    script_args$genome,
+  bsgenome <- switch(script_args$genome,
     "GRCh37" = "BSgenome.Hsapiens.1000genomes.hs37d5",
     "hs37-1kg" = "BSgenome.Hsapiens.1000genomes.hs37d5",
     "GRCh38" = "BSgenome.Hsapiens.NCBI.GRCh38",
     stop(paste0("Invalid genome: ", genome_name))
   )
-  
+
   assertthat::assert_that(requireNamespace(bsgenome), msg = str_interp("${bsgenome} is required"))
-  
-  frag <- script_args$input %>% map(function(input_file) {
-    logging::loginfo(str_interp("Loading fragments: ${input_file} ..."))
-    if (!is_null(script_args$chrom)) {
-      frag <-
-        read_fragments(
-          input_file,
-          range = script_args$chrom,
+  assertthat::assert_that(!is_null(script_args$chrom))
+
+  ifs <- map(script_args$chrom, function(chrom) {
+    logging::loginfo(str_interp("Process chromosome ${chrom} ..."))
+    frag <- script_args$input %>%
+      map(function(input_file) {
+        read_fragments(input_file,
+          range = chrom,
           genome = script_args$genome
         )
-    } else {
-      frag <- read_fragments(input_file, genome = script_args$genome)
-    }
-    
-    frag
-  }) %>% do.call(c, args = .)
-  
-  frag <- sort(frag)
-  
-  logging::loginfo("Fragments summary:")
-  print(frag)
-  log_mem("Done loading fragments")
-  
-  logging::loginfo("Calculating IFS scores ...")
-  result <- ifs_score(
-    frag,
-    window_size = script_args$window_size,
-    step_size = script_args$step_size,
-    gc_correct = script_args$gc_correct,
-    blacklist_region = script_args$exclude_region,
-    high_mappability_region = script_args$high_mappability,
-    min_mapq = script_args$min_mapq,
-    min_fraglen = script_args$min_fraglen,
-    max_fraglen = script_args$max_fraglen,
-    exclude_soft_clipping = script_args$exclude_soft_clipping
-  )
-  
-  ifs <- result$ifs
-  avg_len <- result$avg_len
-  frag_cnt <- result$frag_cnt
-  
-  comments <-
-    c(comments,
-      str_interp("avg_len=${avg_len}"),
-      str_interp("frag_cnt=${frag_cnt}"))
-  
+      }) %>%
+      do.call(c, args = .) %>%
+      sort()
+
+    logging::loginfo("Fragments summary:")
+    print(frag)
+
+    logging::loginfo("Calculating IFS scores ...")
+    ifs_score(
+      frag,
+      window_size = script_args$window_size,
+      step_size = script_args$step_size,
+      gc_correct = script_args$gc_correct,
+      blacklist_region = script_args$exclude_region,
+      high_mappability_region = script_args$high_mappability,
+      min_mapq = script_args$min_mapq,
+      min_fraglen = script_args$min_fraglen,
+      max_fraglen = script_args$max_fraglen,
+      exclude_soft_clipping = script_args$exclude_soft_clipping
+    )$ifs
+  }) %>%
+    do.call(c, args = .)
+
+  logging::loginfo("Calculating GC contents ...")
+  ifs <- calc_gc(ifs)
+
   logging::loginfo("Raw IFS summary:")
   print(ifs)
   log_mem("Done calculating raw IFS scores")
-  
-  # if (script_args$gc_correct) {
-  # Always calculate GC
-  if (TRUE) {
-    ifs <- calc_gc(ifs)
-    log_mem("Done calculating GC contents")
-  }
-  
+
   bedtorch::write_bed(ifs, file_path = script_args$output, comments = comments)
 }
 
@@ -418,10 +419,10 @@ subcommand_peak <- function(script_args) {
       genome = script_args$genome,
       col.names = c("chrom", "start", "end", "score", "cov", "fraglen", "gc")
     )
-  
+
   logging::loginfo("Raw IFS summary:")
   print(ifs)
-  
+
   if (script_args$gc_correct) {
     logging::loginfo("Performing GC correction ...")
     ifs <-
@@ -430,34 +431,34 @@ subcommand_peak <- function(script_args) {
         span = 0.75,
         method = script_args$gc_correct_method,
         max_training_dataset = script_args$gc_correct_n,
-        thread = script_args$thread, 
+        thread = script_args$thread,
       )
     log_mem("Done GC correction")
   } else {
     # No GC correction, just placeholder
     ifs$score_pre_gc <- ifs$score
   }
-  
+
   logging::loginfo("Calculating z-scores ...")
   ifs <- calc_ifs_z_score(ifs)
-  
+
   logging::loginfo("Calculating global p-values ...")
   ifs <- calc_pois_pval(ifs)
   log_mem("Done calculating global p-values")
-  
+
   logging::loginfo("Calculating local p-values ...")
   ifs <-
     calc_pois_pval_local(
       ifs,
       window_size = script_args$window_size,
       step_size = script_args$step_size,
-      local_layout = list(`50k` = 50e3L) #list(`5k` = 5e3L, `10k` = 10e3L, `25k` = 25e3L, `50k` = 50e3L)
+      local_layout = list(`50k` = 50e3L) # list(`5k` = 5e3L, `10k` = 10e3L, `25k` = 25e3L, `50k` = 50e3L)
     )
   log_mem("Done calculating local p-values")
-  
+
   logging::loginfo("IFS summary:")
   print(ifs)
-  
+
   write_ifs_as_bedgraph(ifs, script_args, comments)
 }
 
@@ -465,8 +466,7 @@ subcommand_peak <- function(script_args) {
 # Perform signal-level analysis
 subcommand_signal <- function(script_args) {
   # Make sure the genome is available
-  bsgenome <- switch(
-    script_args$genome,
+  bsgenome <- switch(script_args$genome,
     "GRCh37" = "BSgenome.Hsapiens.1000genomes.hs37d5",
     "hs37-1kg" = "BSgenome.Hsapiens.1000genomes.hs37d5",
     "GRCh38" = "BSgenome.Hsapiens.NCBI.GRCh38",
@@ -477,25 +477,27 @@ subcommand_signal <- function(script_args) {
     rlang::is_scalar_character(script_args$chrom),
     msg = "chrom should be the name of a single chromosome"
   )
-  
+
   logging::loginfo("Loading fragment files ...")
   # Calculate IFS scores as usual, which is used to get the GC-correction model
-  frag <- script_args$input %>% map(function(input_file) {
-    if (!is_null(script_args$chrom)) {
-      frag <-
-        read_fragments(
-          input_file,
-          range = script_args$chrom,
-          genome = script_args$genome
-        )
-    } else {
-      frag <- read_fragments(input_file, genome = script_args$genome)
-    }
-    
-    frag
-  }) %>% do.call(c, args = .)
+  frag <- script_args$input %>%
+    map(function(input_file) {
+      if (!is_null(script_args$chrom)) {
+        frag <-
+          read_fragments(
+            input_file,
+            range = script_args$chrom,
+            genome = script_args$genome
+          )
+      } else {
+        frag <- read_fragments(input_file, genome = script_args$genome)
+      }
+
+      frag
+    }) %>%
+    do.call(c, args = .)
   frag <- sort(frag)
-  
+
   # IFS from all fragments. Necessary for GC and z-score transformation
   result <- ifs_score(
     frag,
@@ -512,10 +514,10 @@ subcommand_signal <- function(script_args) {
   ifs <- result$ifs
   ifs <- calc_gc(ifs)
   ifs$score_pre_gc <- ifs$score
-  
+
   if (script_args$gc_correct) {
     logging::loginfo("Perform GC correction ...")
-    
+
     gc_result <-
       gc_correct(
         ifs,
@@ -532,7 +534,7 @@ subcommand_signal <- function(script_args) {
   }
   score_mean <- mean(ifs$score, na.rm = TRUE)
   score_sd <- sd(ifs$score, na.rm = TRUE)
-  
+
   hotspot <- bedtorch::read_bed(script_args$hotspot, genome = script_args$genome)
   hotspot <- GenomicRanges::resize(hotspot, width = script_args$window_size, fix = "center")
   result <- ifs_score(
@@ -551,7 +553,7 @@ subcommand_signal <- function(script_args) {
   ifs2 <- result$ifs
   ifs2 <- calc_gc(ifs2)
   ifs2$score_pre_gc <- ifs2$score
-  
+
   if (script_args$gc_correct) {
     na_idx <- is.na(ifs2$gc)
     pred <-
@@ -560,7 +562,7 @@ subcommand_signal <- function(script_args) {
     ifs2$score[!na_idx] <-
       pmax(0, ifs2$score_pre_gc[!na_idx] - pred + mean(ifs$score_pre_gc, na.rm = TRUE))
   }
-  
+
   ifs2$z_score <- (ifs2$score - score_mean) / score_sd
   bedtorch::write_bed(ifs2, file_path = script_args$output, comments = comments)
 }
@@ -568,7 +570,7 @@ subcommand_signal <- function(script_args) {
 # Main ----
 if (interactive()) {
   subcommand <- "ifs"
-  
+
   # example
   script_args <- list(
     input = "sandbox/frag/inhouse_breast_healthy_v2.hg19.frag.bed.gz",
@@ -603,20 +605,25 @@ comments <- c(
   # All items in script_args
   names(script_args) %>% purrr::map_chr(function(name) {
     v <- script_args[[name]]
-    v_str <- if (!is_null(v))
-      v %>% purrr::map_chr(as.character) %>% paste(collapse = ":")
-    else
+    v_str <- if (!is_null(v)) {
+      v %>%
+        purrr::map_chr(as.character) %>%
+        paste(collapse = ":")
+    } else {
       ""
+    }
     paste0(name, "=", v_str)
   })
 )
 
-if (script_args$verbose)
+if (script_args$verbose) {
   logging::setLevel("DEBUG")
+}
 
 logging::loginfo(str_interp("Argument summary:"))
-comments %>% purrr::walk(function(v)
-  logging::loginfo(v))
+comments %>% purrr::walk(function(v) {
+  logging::loginfo(v)
+})
 
 library(cragr)
 
