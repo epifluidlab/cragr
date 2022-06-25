@@ -19,8 +19,7 @@ check_binaries <- function(binaries = "tabix", verbose = FALSE, stop_on_fail = F
         message(str_interp("Checking ${binary}: FAIL"))
       }
       return(FALSE)
-    }
-    else {
+    } else {
       if (verbose) {
         message(str_interp("Checking ${binary}: PASS"))
       }
@@ -29,10 +28,11 @@ check_binaries <- function(binaries = "tabix", verbose = FALSE, stop_on_fail = F
   })
 
   check_results <- all(check_results)
-  if (stop_on_fail)
+  if (stop_on_fail) {
     assertthat::assert_that(check_results, msg = paste0("Failed in locating ", paste(binaries, collapse = ", ")))
-  else
+  } else {
     check_results
+  }
 }
 
 
@@ -61,7 +61,7 @@ build_high_mappability_regions <- function(maps_file, chrom, genome, window_size
   scaffold$start <- as.integer(maps$start[1] %/% step_size * step_size)
   scaffold$end <- as.integer(ceiling(scaffold$end / step_size) * step_size)
 
-    # data.table::data.table(chrom = maps$chrom[1])[chrom_sizes, nomatch = 0, on = "chrom"]
+  # data.table::data.table(chrom = maps$chrom[1])[chrom_sizes, nomatch = 0, on = "chrom"]
   scaffold <- scaffold[, {
     start <- as.integer(seq(start, end, by = step_size) %>% head(-1))
     end <- as.integer(start + step_size)

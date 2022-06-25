@@ -1,8 +1,7 @@
 # Determine the anchor point
 get_anchor <- function(feature, anchor = c("center", "start", "end")) {
-  anchor = match.arg(anchor)
-  switch(
-    anchor,
+  anchor <- match.arg(anchor)
+  switch(anchor,
     center = as.integer(round(start(feature) + (width(
       feature
     ) - 1) / 2)),
@@ -25,8 +24,10 @@ enrichment_analysis <-
     mcols(feature) <- NULL
 
     # Only process the common part
-    common_seqlevels <- intersect(unique(seqnames(hotspot)),
-                                  unique(seqnames(feature)))
+    common_seqlevels <- intersect(
+      unique(seqnames(hotspot)),
+      unique(seqnames(feature))
+    )
     # common_seqlevels <-
     #   intersect(seqlevels(feature), seqlevels(hotspot))
     feature <-
@@ -39,8 +40,10 @@ enrichment_analysis <-
 
     # Adjusted feature: anchor - hw -> anchor + hw
     ranges(feature) <-
-      IRanges::IRanges(start = pmax(1, anchor_pos - half_width),
-                       end = anchor_pos + half_width)
+      IRanges::IRanges(
+        start = pmax(1, anchor_pos - half_width),
+        end = anchor_pos + half_width
+      )
 
     hits <- findOverlaps(hotspot, feature)
 
@@ -62,11 +65,13 @@ enrichment_analysis <-
     seqnames(matched_gr) <- seqnames(matched_gr)[1]
 
     scaffold <-
-      GenomicRanges::GRanges(seqnames = seqnames(matched_gr)[1],
-                             ranges = IRanges::IRanges(
-                               start = (pseudo_origin - half_width):(pseudo_origin + half_width),
-                               width = 1
-                             ))
+      GenomicRanges::GRanges(
+        seqnames = seqnames(matched_gr)[1],
+        ranges = IRanges::IRanges(
+          start = (pseudo_origin - half_width):(pseudo_origin + half_width),
+          width = 1
+        )
+      )
 
     data.table::data.table(
       pos = seq(-half_width, half_width),
@@ -82,7 +87,8 @@ signal_level_analysis <- function(hotspot, signal, half_width = 1000L) {
   signal <- keepSeqlevels(signal, common_seqlevels, pruning.mode = "coarse")
   hotspot <- keepSeqlevels(hotspot, common_seqlevels, pruning.mode = "coarse")
 
-  hotspot <- GenomicRanges::resize(hotspot, width = 2 * half_width + 1, fix = "center")
+  hotspot <-
+    GenomicRanges::resize(hotspot, width = 2 * half_width + 1, fix = "center")
   hits <- GenomicRanges::findOverlaps(signal, hotspot)
 
   matched_gr <- signal[queryHits(hits)]
@@ -97,12 +103,12 @@ signal_level_analysis <- function(hotspot, signal, half_width = 1000L) {
   seq(offset - half_width, offset + half_width) %>%
     map_dfr(function(x) {
       gr <- matched_gr[start(matched_gr) <= x & end(matched_gr) >= x]
-      if (length(gr) > 0)
+      if (length(gr) > 0) {
         value <- mean(gr$score)
-      else
+      } else {
         value <- NA
+      }
 
       tibble(offset = x - offset, value = value)
     })
 }
-
