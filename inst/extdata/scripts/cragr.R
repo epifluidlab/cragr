@@ -219,7 +219,9 @@ parse_script_args <- function() {
         convert_hyphens_to_underscores = TRUE
       )
 
-    library(tidyverse)
+    library(dplyr)
+    library(purrr)
+    library(stringr)
     library(magrittr)
 
     # Process arguments
@@ -257,16 +259,15 @@ parse_script_args <- function() {
       stop("window_size must be multiples of step_size")
     }
 
-    # genome must be hs37-1kg
-    assertthat::assert_that(
-      is_scalar_character(script_args$genome) &&
-        script_args$genome %in% c("hs37-1kg", "GRCh37", "GRCh38")
-    )
-    # if (script_args$genome != "hs37-1kg") {
-    #   stop("Currently, only genome hs37-1kg is supported")
-    # }
-
-    # assertthat::assert_that(script_args$hotspot_method %in% c("pois", "nb"))
+    # genome must be one of GRCh37, GRCh38, hg19 and hg38
+    # internally it can only can be GRCh37 or GRCh38
+    if (script_args$genome %in% c("GRCh37", "hg19")) {
+      script_args$genome <- "GRCh37"
+    } else if (script_args$genome %in% c("GRCh38", "hg38")) {
+      script_args$genome <- "GRCh38"
+    } else {
+      stop(paste0("Unsupported genome: ", script_args$genome))
+    }
 
     return(list(subcommand, script_args))
   }
@@ -383,9 +384,8 @@ subcommand_ifs <- function(script_args) {
   # Make sure the genome is available
   bsgenome <- switch(script_args$genome,
     "GRCh37" = "BSgenome.Hsapiens.1000genomes.hs37d5",
-    "hs37-1kg" = "BSgenome.Hsapiens.1000genomes.hs37d5",
     "GRCh38" = "BSgenome.Hsapiens.NCBI.GRCh38",
-    stop(paste0("Invalid genome: ", genome_name))
+    stop(paste0("Invalid genome: ", script_args$genome))
   )
 
   assertthat::assert_that(requireNamespace(bsgenome), msg = str_interp("${bsgenome} is required"))
@@ -411,9 +411,9 @@ subcommand_peak <- function(script_args) {
   ifs <-
     bedtorch::read_bed(
       script_args$input,
-      genome = script_args$genome,
       col.names = c("chrom", "start", "end", "score", "cov", "fraglen", "gc")
     )
+  ifs <- assign_seqinfo(ifs, script_args$genome)
 
   logging::loginfo("Raw IFS summary:")
   print(ifs)
@@ -501,8 +501,10 @@ subcommand_signal <- function(script_args) {
     score_mean <- mean(ifs$score, na.rm = TRUE)
     score_sd <- sd(ifs$score, na.rm = TRUE)
 
-    hotspot <- bedtorch::read_bed(script_args$hotspot, genome = script_args$genome)
-    hotspot <- GenomicRanges::resize(hotspot, width = script_args$window_size, fix = "center")
+    hotspot <- bedtorch::read_bed(script_args$hotspot) %>%
+      assign_seqinfo(genome = script_args$genome) %>%
+      GenomicRanges::resize(width = script_args$window_size, fix = "center")
+    
     ifs2 <- ifs_score(
       frag,
       interval = hotspot,

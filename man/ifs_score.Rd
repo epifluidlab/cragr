@@ -6,6 +6,7 @@
 \usage{
 ifs_score(
   fragment_data,
+  interval = NULL,
   chrom = NULL,
   window_size = 200L,
   step_size = 20L,
@@ -20,6 +21,8 @@ ifs_score(
 }
 \arguments{
 \item{fragment_data}{A \code{GRanges} data frame containing cfDNA fragment data.}
+
+\item{interval}{Intervals against which IFS scores should be calculated}
 
 \item{chrom}{Calculate IFS scores for certain chromosomes. If \code{NULL}, all
 chromosomes in \code{fragment_data} will be used.}

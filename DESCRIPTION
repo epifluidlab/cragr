@@ -1,6 +1,6 @@
 Package: cragr
 Title: R package for CRAG
-Version: 0.1.8.16
+Version: 0.1.8.17
 Authors@R: 
     person(given = "Haizi",
            family = "Zheng",
@@ -12,7 +12,7 @@ License: MIT + file LICENSE
 Encoding: UTF-8
 LazyData: true
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.1.1
+RoxygenNote: 7.2.0
 Suggests: 
     testthat (>= 3.0.0),
     BSgenome.Hsapiens.1000genomes.hs37d5
@@ -24,12 +24,13 @@ Imports:
     data.table,
     purrr,
     stringr,
+    magrittr,
     here,
     optparse,
     Rcpp,
     lobstr,
     logging,
-    bedtorch (>= 0.1.12.11)
+    bedtorch (>= 0.1.12.12)
 Remotes: 
     haizi-zh/bedtorch
 LinkingTo: 

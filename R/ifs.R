@@ -328,17 +328,25 @@ calc_ifs_z_score <- function(ifs) {
 #'
 #' @export
 calc_gc <- function(ifs) {
-  genome_name <- GenomeInfoDb::genome(ifs) %>% unique()
-  assertthat::assert_that(is_scalar_character(genome_name) &&
-    (genome_name %in% c("GRCh37", "hs37-1kg", "GRCh38")))
+  # If the style is UCSC, temporarily change to NCBI genomes
+  original_style <- get_style(ifs)
+  if (is_true(original_style == "UCSC")) {
+    ifs <- set_style(ifs, "NCBI")
+  }
 
+  original_seqinfo <- seqinfo(ifs)
+  genome_name <- GenomeInfoDb::genome(ifs) %>% unique()
+  assert_that(
+    is_scalar_character(genome_name),
+    genome_name %in% c("GRCh37", "GRCh38")
+  )
   bsgenome <- switch(genome_name,
     "GRCh37" = BSgenome::getBSgenome(
-      genome = "BSgenome.Hsapiens.1000genomes.hs37d5", load.only = TRUE),
-    "hs37-1kg" = BSgenome::getBSgenome(
-      genome = "BSgenome.Hsapiens.1000genomes.hs37d5", load.only = TRUE),
+      genome = "BSgenome.Hsapiens.1000genomes.hs37d5", load.only = TRUE
+    ),
     "GRCh38" = BSgenome::getBSgenome(
-      genome = "BSgenome.Hsapiens.NCBI.GRCh38", load.only = TRUE),
+      genome = "BSgenome.Hsapiens.NCBI.GRCh38", load.only = TRUE
+    ),
     stop(paste0("Invalid genome: ", genome_name))
   )
 
@@ -358,10 +366,20 @@ calc_gc <- function(ifs) {
   # Discard a bin if it contains too many Ns
   mask_threshold <- 0.05
   base_masked <- Biostrings::letterFrequency(
-    genome_seq, letters = "N", as.prob = TRUE)[, 1] > mask_threshold
+    genome_seq,
+    letters = "N", as.prob = TRUE
+  )[, 1] > mask_threshold
   gc[base_masked] <- NA
 
   ifs$gc <- gc
+
+  seqlevels(ifs) <- seqlevels(original_seqinfo)
+  seqinfo(ifs) <- original_seqinfo
+
+  if (is_true(original_style == "UCSC")) {
+    ifs <- set_style(ifs, "UCSC")
+  }
+
   return(ifs)
 }
 
@@ -383,10 +401,12 @@ gc_correct <-
            ...) {
     if (method == "standard") {
       return(gc_correct_standard(
-        ifs, span, max_training_dataset, return_model, ...))
+        ifs, span, max_training_dataset, return_model, ...
+      ))
     } else if (method == "caret") {
       return(gc_correct_caret(
-        ifs, span, max_training_dataset, return_model, ...))
+        ifs, span, max_training_dataset, return_model, ...
+      ))
     } else {
       stop(paste0("Unsupported method: ", method))
     }
@@ -421,7 +441,8 @@ gc_correct_caret <-
       sel_idx <- sample(sel_idx, size = max_training_dataset)
     } else {
       logging::loginfo(
-        str_interp("Training using LOESS mode, total n = ${length(sel_idx)}"))
+        str_interp("Training using LOESS mode, total n = ${length(sel_idx)}")
+      )
     }
 
     library(caret)

@@ -1,11 +1,43 @@
+#' Guess whether the seqinfo is hg19/hg38 or GRCh37/38 by guessing the style
+#' @param genome Should be either GRCh37 or GRCh38
+#' @export
+assign_seqinfo <- function(gr, genome) {
+  assert_that(!is_null(genome), genome %in% c("GRCh37", "GRCh38"))
+  # Assign seqinfo
+  genome_style <- get_style(gr)
+  if (is_true(genome_style == "NCBI")) {
+    if (is_true(genome == "GRCh37")) {
+      frag_seqinfo <- bedtorch::get_seqinfo(genome = "GRCh37")
+    } else {
+      frag_seqinfo <- bedtorch::get_seqinfo(genome = "GRCh38")
+    }
+  } else if (is_true(genome_style == "UCSC")) {
+    if (is_true(genome == "GRCh37")) {
+      frag_seqinfo <- bedtorch::get_seqinfo(genome = "hg19")
+    } else {
+      frag_seqinfo <- bedtorch::get_seqinfo(genome = "hg38")
+    }
+  } else {
+    stop(paste0("Unknown style: ", genome_style))
+  }
+
+  seqlevels(gr) <- seqlevels(frag_seqinfo)
+  seqinfo(gr) <- frag_seqinfo
+  gr
+}
+
+#' Read fragment BED file
+#' @param genome Should be GRCh37 or GRCh38
 #' @export
 read_fragments <- function(file_path, range = NULL, genome = NULL, verbose = FALSE) {
   logging::logdebug("Reading BED data")
   frag <- bedtorch::read_bed(
     file_path = file_path,
-    range = range,
-    genome = genome
+    range = range
   )
+
+  frag <- assign_seqinfo(frag, genome)
+
   GenomicRanges::strand(frag) <- "*"
   logging::logdebug("Done reading BED data")
   frag_metadata <- mcols(frag)

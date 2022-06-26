@@ -4,7 +4,14 @@
 \alias{gc_correct}
 \title{Perform GC-correction for IFS scores}
 \usage{
-gc_correct(ifs, span = 0.75, max_training_dataset = 2000000L)
+gc_correct(
+  ifs,
+  span = 0.75,
+  max_training_dataset = 1000000L,
+  method = "standard",
+  return_model = FALSE,
+  ...
+)
 }
 \arguments{
 \item{span}{\code{span} used in LOESS fit.}
@@ -12,6 +19,9 @@ gc_correct(ifs, span = 0.75, max_training_dataset = 2000000L)
 \item{max_training_dataset}{LOESS can be slow for a large dataset. If it
 contains more data points than this parameter, we will sample a subset and
 do the training.}
+
+\item{method}{If \code{standard}, the built-in \code{loess} function will be used for
+the calculation. If \code{caret}, will use \code{gamLOESS}}
 }
 \description{
 Perform GC-correction for IFS scores
