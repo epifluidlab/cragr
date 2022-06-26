@@ -25,6 +25,7 @@ Imports:
     purrr,
     stringr,
     magrittr,
+    lubridate,
     here,
     optparse,
     Rcpp,

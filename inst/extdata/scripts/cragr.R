@@ -58,12 +58,12 @@ ifs_parser <- optparse::OptionParser(
       # "encode.blacklist.hs37-1kg",
       help = "BED files defining regions to be excluded from the analysis, separated by colon. Default is the ENCODE Blacklist: https://www.nature.com/articles/s41598-019-45839-z, which is included in this R package"
     ),
-    optparse::make_option(
-      c("--exclude-soft-clipping"),
-      action = "store_true",
-      default = FALSE,
-      help = "Exclude fragments with leading soft-clipping from the analysis"
-    ),
+    # optparse::make_option(
+    #   c("--exclude-soft-clipping"),
+    #   action = "store_true",
+    #   default = FALSE,
+    #   help = "Exclude fragments with leading soft-clipping from the analysis"
+    # ),
     optparse::make_option(c("-w", "--window-size"),
       default = 200L,
       help = "Size of the sliding window [200]"
@@ -161,12 +161,12 @@ signal_parser <- optparse::OptionParser(
       default = NULL, # "encode.blacklist.hs37-1kg",
       help = "BED files defining regions to be excluded from the analysis, separated by colon. Default is the ENCODE Blacklist: https://www.nature.com/articles/s41598-019-45839-z, which is included in this R package"
     ),
-    optparse::make_option(
-      c("--exclude-soft-clipping"),
-      action = "store_true",
-      default = FALSE,
-      help = "Exclude fragments with leading soft-clipping from the analysis"
-    ),
+    # optparse::make_option(
+    #   c("--exclude-soft-clipping"),
+    #   action = "store_true",
+    #   default = FALSE,
+    #   help = "Exclude fragments with leading soft-clipping from the analysis"
+    # ),
     optparse::make_option(
       c("-w", "--window-size"),
       default = 200L,
@@ -370,7 +370,7 @@ raw_ifs_helper <- function(script_args, chrom) {
     min_mapq = script_args$min_mapq,
     min_fraglen = script_args$min_fraglen,
     max_fraglen = script_args$max_fraglen,
-    exclude_soft_clipping = script_args$exclude_soft_clipping
+    exclude_soft_clipping = FALSE #script_args$exclude_soft_clipping
   )$ifs
 
   list(frag = frag, ifs = calc_gc(ifs))
@@ -516,7 +516,7 @@ subcommand_signal <- function(script_args) {
       min_mapq = script_args$min_mapq,
       min_fraglen = script_args$min_fraglen,
       max_fraglen = script_args$max_fraglen,
-      exclude_soft_clipping = script_args$exclude_soft_clipping
+      exclude_soft_clipping = FALSE #script_args$exclude_soft_clipping
     )$ifs %>%
       calc_gc()
     ifs2$score_pre_gc <- ifs2$score
@@ -539,34 +539,10 @@ subcommand_signal <- function(script_args) {
 }
 
 # Main ----
-if (interactive()) {
-  subcommand <- "ifs"
-
-  # example
-  script_args <- list(
-    input = "sandbox/frag/inhouse_breast_healthy_v2.hg19.frag.bed.gz",
-    output = "sandbox/inhouse_breast_healthy_v2.ifs.raw.chr17.bed.gz",
-    genome = "GRCh37",
-    gc_correct = FALSE,
-    gc_correct_method = "standard",
-    high_mappability = NULL,
-    chrom = "17",
-    min_mapq = 30L,
-    min_fraglen = 50L,
-    max_fraglen = 1000L,
-    exclude_region = "sandbox/data/ENCODE.blacklist.hg19.ENCFF001TDO.bed",
-    exclude_soft_clipping = TRUE,
-    window_size = 200L,
-    step_size = 20L,
-    verbose = TRUE
-  )
-} else {
-  parse_script_args_result <- parse_script_args()
-  subcommand <- parse_script_args_result[[1]]
-  script_args <- parse_script_args_result[[2]]
-  rm(parse_script_args_result)
-}
-
+parse_script_args_result <- parse_script_args()
+subcommand <- parse_script_args_result[[1]]
+script_args <- parse_script_args_result[[2]]
+rm(parse_script_args_result)
 
 # Build comment lines
 comments <- c(
