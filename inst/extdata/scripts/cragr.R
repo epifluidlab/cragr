@@ -348,6 +348,7 @@ log_mem <- function(label = "Unknown") {
 raw_ifs_helper <- function(script_args, chrom) {
   frag <- script_args$input %>%
     map(function(input_file) {
+      logging::loginfo(str_interp("Loading fragment file ${input_file} ..."))
       read_fragments(input_file,
         range = chrom,
         genome = script_args$genome
