@@ -67,7 +67,7 @@ For you information, below are steps from the BAM file to the fragment file:
 > samtools view -h -f 3 -F 3852 -G 48 --incl-flags 48 \
   qsorted.bam |
   bamToBed -bedpe -mate1 -i stdin |
-  bioawk -t '{if ($1!=$4) next; if ($9=="+") {s=$2;e=$6} else {s=$5;e=$3} if (e>s) print $1,s,e,$7,$8,$9}' |
+  awk -F'\t' -v OFS="\t" '{if ($1!=$4) next; if ($9=="+") {s=$2;e=$6} else {s=$5;e=$3} if (e>s) print $1,s,e,$7,$8,$9}' |
   sort -k1,1V -k2,2n |
   bgzip > sample.frag.bed.gz
 > tabix -p bed sample.frag.bed.gz

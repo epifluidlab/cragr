@@ -66,12 +66,9 @@ def stage_peak_cores(chrom):
 
 rule stage_ifs:
     input:
-        # frag="frag/{sid}.frag.chr{chrom}.bed.gz",
-        # frag_idx="frag/{sid}.frag.chr{chrom}.bed.gz.tbi",
         frag="frag/{sid}.frag.bed.gz",
         frag_idx="frag/{sid}.frag.bed.gz.tbi",
-        mappability="data/mappability.hs37-1kg.w200.s20.0_9.bed.gz",
-        mappability_idx="data/mappability.hs37-1kg.w200.s20.0_9.bed.gz.tbi",
+        blacklist="data/wgEncodeDacMapabilityConsensusExcludable.hs37-1kg.bed"
     output:
         ifs=temp("temp/{sid}.ifs.raw.chr{chrom}.bed.gz")
     log: "log/{sid}.chr{chrom}.stage_ifs.log"
@@ -94,8 +91,7 @@ rule stage_ifs:
         -o "$tmpdir"/output.bed.gz \
         --gc-correct \
         --genome GRCh37 \
-        --exclude-region encode.blacklist.hs37-1kg \
-        -m {input.mappability} \
+        --exclude-region {input.blacklist} \
         --chrom {wildcards.chrom} \
         --verbose 2>&1 | tee {log}
 
@@ -107,7 +103,6 @@ rule stage_ifs:
 rule stage_peak:
     input:
         ifs="temp/{sid}.ifs.raw.chr{chrom}.bed.gz",
-        mappability="data/mappability.hs37-1kg.w200.s20.0_9.bed.gz",
     output:
         ifs=temp("temp/{sid}.ifs.{gc_type}.chr{chrom}.bedGraph.gz"),
     log: "log/{sid}.{gc_type}.chr{chrom}.stage_peak.log"
@@ -137,9 +132,6 @@ rule stage_peak:
         -o "$tmpdir"/ifs.bedGraph.gz \
         --gc-correct \
         --genome GRCh37 \
-        --exclude-region encode.blacklist.hs37-1kg \
-        -m {input.mappability} \
-        --chrom {wildcards.chrom} \
         --verbose 2>&1 | tee {log}
 
         mv "$tmpdir"/ifs.bedGraph.gz {output.ifs}.tmp
@@ -280,9 +272,9 @@ rule call_hotspot:
         bgzip $tmpdir/output.bed
 
         zcat {input.ifs} |
-        bioawk -t 'substr($1,1,1)!="#" && $16<=0.2 && $16!="."' |
+        bioawk -t 'substr($1,1,1)!="#" && $17<=0.2 && $17!="."' |
         bedtools slop -g {input.chrom_sizes} -i - -b 90 -header |
-        bedtools merge -header -i - -d 200 |
+        bedtools merge -header -i - -d 200 -c 17 -o min |
         bgzip >> $tmpdir/output.bed.gz
 
         mv $tmpdir/output.bed.gz {output.hotspot}.tmp
@@ -291,22 +283,79 @@ rule call_hotspot:
         rm -rf $tmpdir
         """
 
+rule stage_signal:
+    input:
+        frag="frag/{sid}.frag.bed.gz",
+        frag_idx="frag/{sid}.frag.bed.gz.tbi",
+        blacklist="data/wgEncodeDacMapabilityConsensusExcludable.hs37-1kg.bed"
+        hotspot="result/{sid}.hotspot.{gc_type}.bed.gz"
+    output:
+        ifs=temp("temp/{sid}.ifs_hotspot.{gc_type,(gc|nogc)}.chr{chrom}.bed.gz")
+    log: "log/{sid}.chr{chrom}.stage_signal.log"
+    params:
+        slurm_job_label=lambda wildcards: f"cragr.stage_signal.{wildcards.sid}.chr{wildcards.chrom}.{wildcards.gc_type}",
+    threads: lambda wildcards, input, attempt: int(CPU_FACTOR * stage_ifs_cores(wildcards.chrom, input.frag) * (0.5 + 0.5 * attempt))
+    resources:
+        mem_mb=lambda wildcards, threads: threads * MEM_PER_CORE,
+        time=WALL_TIME_MAX,
+        time_min=300,
+        attempt=lambda wildcards, threads, attempt: attempt
+    shell:
+        """
+        set +u; if [ -z $LOCAL ] || [ -z $SLURM_CLUSTER_NAME ]; then tmpdir=$(mktemp -d); else tmpdir=$(mktemp -d -p $LOCAL); fi; set -u
 
-# rule signal_level:
-#     input:
-#         hotspot="result/{sid}.hotspot.{hotspot}.bed.gz",
-#         signal="data/roadmap/{signal}.pval.signal.bedGraph.gz",
-#         signal_tbi="data/roadmap/{signal}.pval.signal.bedGraph.gz.tbi",
-#     output:
-#         "result/{sid}.hotspot.{hotspot}.{signal}.tsv"
-#     log: "log/{sid}.hotspot.{hotspot}.{signal}.log"
-#     params:
-#         slurm_job_label=lambda wildcards: f"cragr.{wildcards.sid}.{wildcards.hotspot}.{wildcards.signal}",
-#     shell:
-#         """
-#         Rscript {params.main_script} signal \
-#         -i {input.hotspot} \
-#         --signal {input.signal} \
-#         --output {output} \
-#         --verbose 2>&1 | tee {log}
-#         """
+        {R} -e 'sessionInfo()'
+
+        {R} {SCRIPT_PATH}/cragr.R signal \
+        -i {input.frag} \
+        --hotspot {input.hotspot}
+        -o "$tmpdir"/output.bed.gz \
+        --gc-correct \
+        --genome GRCh37 \
+        --exclude-region {input.blacklist} \
+        --chrom {wildcards.chrom} \
+        --verbose 2>&1 | tee {log}
+
+        mv "$tmpdir"/output.bed.gz {output.ifs}.tmp
+        mv {output.ifs}.tmp {output.ifs}
+        """
+
+rule merge_signal:
+    input:
+        ifs=expand("temp/{{sid}}.ifs_hotspot.{{gc_type}}.chr{chrom}.bed.gz", chrom=range(1, 23)),
+    output:
+        ifs="result/{sid}.ifs_hotspot.{gc_type,(gc|nogc)}.bed.gz",
+        ifs_idx="result/{sid}.ifs_hotspot.{gc_type}.bed.gz.tbi",
+    threads: lambda wildcards, input, attempt: int(2 * (0.5 + 0.5 * attempt))
+    resources:
+        mem_mb=lambda wildcards, threads: threads * MEM_PER_CORE,
+        time=WALL_TIME_MAX,
+        time_min=300,
+        attempt=lambda wildcards, threads, attempt: attempt
+    params:
+        slurm_job_label=lambda wildcards: f"cragr.merge_ifs.{wildcards.sid}.{wildcards.gc_type}",
+    shell:
+        """
+        set +u; if [ -z $LOCAL ] || [ -z $SLURM_CLUSTER_NAME ]; then tmpdir=$(mktemp -d); else tmpdir=$(mktemp -d -p $LOCAL); fi; set -u
+
+        output_ifs="$tmpdir"/ifs.bed.gz
+
+        echo "Merging IFS data"
+        idx=0
+        for input_file in {input.ifs}
+        do
+            echo "Processing $input_file"
+            idx=$((idx + 1))
+            if [ $idx == 1 ]; then
+                zcat < "$input_file" | bgzip > "$output_ifs"
+            else
+                zcat < "$input_file" | awk 'substr($0,1,1)!="#"' | bgzip >> "$output_ifs"
+            fi
+        done
+
+        tabix -p bed "$output_ifs"
+
+        mv "$output_ifs" {output.ifs}.tmp
+        mv {output.ifs}.tmp {output.ifs}
+        mv "$output_ifs".tbi {output.ifs_idx}
+        """
