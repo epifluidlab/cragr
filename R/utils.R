@@ -195,3 +195,21 @@ jaccard_index <- function(hotspot1, hotspot2, max_distance = 200L) {
     length(hotspot1_unique) + length(hotspot2_unique) + length(hotspot1_common)
   ))
 }
+
+
+
+#' Batch effect correction based on ComBat algorithm
+#' @param ifs a data frame containing uncorrected IFS scores
+#' @param batch a factor vector for each sample's batch information
+combat <- function(ifs, batch) {
+  stopifnot(length(batch) == nrow(ifs))
+  
+  mod <- model.matrix( ~ 1, ifs)
+  ifs <- t(as.matrix(ifs))
+  
+  ifs <- sva::ComBat(dat = ifs,
+                     batch = batch,
+                     mod = mod) |> t() |> as.data.table()
+  
+  return(ifs)
+}

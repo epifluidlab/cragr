@@ -31,8 +31,10 @@ Imports:
     Rcpp,
     lobstr,
     logging,
-    bedtorch (>= 0.1.12.12)
+    bedtorch (>= 0.1.12.12),
+    sva
 Remotes: 
-    haizi-zh/bedtorch
+    haizi-zh/bedtorch,
+    bioc::sva
 LinkingTo: 
     Rcpp
