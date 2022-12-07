@@ -16,6 +16,7 @@ System requirements:
 - R 4.1.x or higher
 - tabix and bgzip (included in [htslib](http://www.htslib.org/download/))
 - [bedtools](https://bedtools.readthedocs.io/en/latest/)
+- [samtools](http://www.htslib.org/)
 - For Mac OSX, install xcode first
 
 Recommended installation steps:
