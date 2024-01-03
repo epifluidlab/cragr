@@ -6,7 +6,7 @@ cragr is an R package for CRAG (**C**ell f**R**ee dn**A** fra**G**mentation) ana
 
 Cite our paper:
 
-Zhou X, Zheng H, Fu H, McKillip KL, Pinney SM, Liu Y. (2022) CRAG: De novo characterization of cell-free DNA fragmentation hotspots in plasma whole-genome sequencing. Genome Medicine in press; preprint doi: https://doi.org/10.1101/2020.07.16.201350
+Zhou X, Zheng H, Fu H, McKillip KL, Pinney SM, Liu Y. (2022) CRAG: De novo characterization of cell-free DNA fragmentation hotspots in plasma whole-genome sequencing. Genome Medicine [https://doi.org/10.1101/2020.07.16.201350](https://doi.org/10.1186/s13073-022-01141-8)
 
 
 ## Installation
