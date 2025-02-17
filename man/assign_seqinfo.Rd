@@ -2,13 +2,13 @@
 % Please edit documentation in R/io.R
 \name{assign_seqinfo}
 \alias{assign_seqinfo}
-\title{Guess whether the seqinfo is hg19/hg38 or GRCh37/38 by guessing the style}
+\title{Guess whether the seqinfo is hg19/hg38, GRCh37/38, or T2T/hs1 by guessing the style}
 \usage{
 assign_seqinfo(gr, genome)
 }
 \arguments{
-\item{genome}{Should be either GRCh37 or GRCh38}
+\item{genome}{Should be either GRCh37, GRCh38, or hs1}
 }
 \description{
-Guess whether the seqinfo is hg19/hg38 or GRCh37/38 by guessing the style
+Guess whether the seqinfo is hg19/hg38, GRCh37/38, or T2T/hs1 by guessing the style
 }

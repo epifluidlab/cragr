@@ -6,9 +6,6 @@
 \usage{
 read_fragments(file_path, range = NULL, genome = NULL, verbose = FALSE)
 }
-\arguments{
-\item{genome}{Should be GRCh37 or GRCh38}
-}
 \description{
 Read fragment BED file
 }

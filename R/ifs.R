@@ -103,7 +103,7 @@ calculate_raw_ifs <-
     logging::loginfo("Calculating raw IFS scores ...")
 
     if (!is_null(interval)) {
-      # Calcualte IFS scores over known intervals
+      # Calculate IFS scores over known intervals
       interval <- bedtorch::as.GenomicRanges(interval)
       fragment_data <- bedtorch::as.GenomicRanges(fragment_data)
       avg_len <- mean(fragment_data$length)
@@ -191,8 +191,7 @@ calculate_raw_ifs <-
 #'   `step_size`.
 #' @param step_size Incremental steps of the sliding window.
 #' @param gc_correct Logical value. Whether to perform GC correction. If `TRUE`,
-#'   the corresponding `BSgenome` should be present. Currently, only support
-#'   `BSgenome.Hsapiens.1000genomes.hs37d5`.
+#'   the corresponding `BSgenome` should be present. 
 #' @param blacklist_region Those fragments whose midpoint fall within any of the
 #'   excluded regions will not be used in the analysis. `blacklist_region` can
 #'   be either a character vector that contains the names of the files defining
@@ -324,7 +323,7 @@ calc_ifs_z_score <- function(ifs) {
 #' Calculate GC content for each fragment
 #'
 #' @param ifs A `GRanges` object. In order to calculate GC content, `ifs` must
-#'   have a valid genome. Currently, only hs37-1kg is supported. Furthermore, you need
+#'   have a valid genome.
 #'
 #' @export
 calc_gc <- function(ifs) {
@@ -338,7 +337,7 @@ calc_gc <- function(ifs) {
   genome_name <- GenomeInfoDb::genome(ifs) %>% unique()
   assert_that(
     is_scalar_character(genome_name),
-    genome_name %in% c("GRCh37", "GRCh38")
+    genome_name %in% c("GRCh37", "GRCh38", 'T2T-CHM13v2.0')
   )
   bsgenome <- switch(genome_name,
     "GRCh37" = BSgenome::getBSgenome(
@@ -346,6 +345,9 @@ calc_gc <- function(ifs) {
     ),
     "GRCh38" = BSgenome::getBSgenome(
       genome = "BSgenome.Hsapiens.NCBI.GRCh38", load.only = TRUE
+    ),
+    "T2T-CHM13v2.0" = BSgenome::getBSgenome(
+      genome = "BSgenome.Hsapiens.NCBI.T2T.CHM13v2.0", load.only = TRUE
     ),
     stop(paste0("Invalid genome: ", genome_name))
   )
@@ -423,7 +425,7 @@ gc_correct_caret <-
     assertthat::are_equal(length(unique(seqnames(ifs))), 1)
     assertthat::assert_that("gc" %in% colnames(mcols(ifs)))
 
-    logging::loginfo("Performin GC correction through caret/gamLoess ...")
+    logging::loginfo("Performing GC correction through caret/gamLoess ...")
 
     ifs$score_pre_gc <- ifs$score
 
@@ -503,7 +505,7 @@ gc_correct_standard <-
     assertthat::are_equal(length(unique(seqnames(ifs))), 1)
     assertthat::assert_that("gc" %in% colnames(mcols(ifs)))
 
-    logging::loginfo("Performin GC correction through standard LOESS regression ...")
+    logging::loginfo("Performing GC correction through standard LOESS regression ...")
 
     ifs$score_pre_gc <- ifs$score
     sel_idx <- 1:length(ifs)

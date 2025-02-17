@@ -1,22 +1,30 @@
-#' Guess whether the seqinfo is hg19/hg38 or GRCh37/38 by guessing the style
-#' @param genome Should be either GRCh37 or GRCh38
+#' Guess whether the seqinfo is hg19/hg38, GRCh37/38, or T2T/hs1 by guessing the style
+#' @param genome Should be either GRCh37, GRCh38, or hs1
 #' @export
 assign_seqinfo <- function(gr, genome) {
-  assert_that(!is_null(genome), genome %in% c("GRCh37", "GRCh38"))
+  assert_that(!is_null(genome), genome %in% c("GRCh37", "GRCh38", 'hs1'))
   # Assign seqinfo
   genome_style <- get_style(gr)
   if (is_true(genome_style == "NCBI")) {
     if (is_true(genome == "GRCh37")) {
       frag_seqinfo <- bedtorch::get_seqinfo(genome = "GRCh37")
-    } else {
+    } else if (is_true(genome == "GRCh38")) {
       frag_seqinfo <- bedtorch::get_seqinfo(genome = "GRCh38")
-    }
+    } else if (is_true(genome == "hs1")) {
+      frag_seqinfo <- bedtorch::get_seqinfo(genome = "T2T-CHM13v2.0")
+    } else {
+      stop(paste0("Unknown NCBI genome: ", genome))
+    } 
   } else if (is_true(genome_style == "UCSC")) {
     if (is_true(genome == "GRCh37")) {
       frag_seqinfo <- bedtorch::get_seqinfo(genome = "hg19")
-    } else {
+    } else if (is_true(genome == "GRCh38")) {
       frag_seqinfo <- bedtorch::get_seqinfo(genome = "hg38")
-    }
+    } else if (is_true(genome == "hs1")) {
+      frag_seqinfo <- bedtorch::get_seqinfo(genome = "hs1")
+    } else {
+      stop(paste0("Unknown UCSC genome: ", genome))
+    } 
   } else {
     stop(paste0("Unknown style: ", genome_style))
   }
@@ -27,7 +35,7 @@ assign_seqinfo <- function(gr, genome) {
 }
 
 #' Read fragment BED file
-#' @param genome Should be GRCh37 or GRCh38
+#' @param genome
 #' @export
 read_fragments <- function(file_path, range = NULL, genome = NULL, verbose = FALSE) {
   logging::logdebug("Reading BED data")

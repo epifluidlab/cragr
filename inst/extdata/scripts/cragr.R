@@ -13,7 +13,7 @@ ifs_parser <- optparse::OptionParser(
       help = "Path to the input fragment file. The file should be in bgzip-compressed BED format, alongside with the .tbi index file."
     ),
     optparse::make_option(c("-o", "--output"), type = "character", help = "Path to the output file."),
-    optparse::make_option(c("--genome"), type = "character", help = "Which reference genome the input fragment file is based on. Should be either GRCh37 or GRCh38."),
+    optparse::make_option(c("--genome"), type = "character", help = "Which reference genome the input fragment file is based on. Should be either GRCh37, GRCh38, or hs1."),
     optparse::make_option(
       c("-g", "--gc-correct"),
       default = FALSE,
@@ -178,6 +178,22 @@ signal_parser <- optparse::OptionParser(
   )
 )
 
+chromsizes_parser <- optparse::OptionParser(
+  option_list = list(
+    optparse::make_option(
+      c("--genome"), 
+      type = "character", 
+      help = "Which reference genome to get chromosome sizes for."
+    ),
+    optparse::make_option(
+      c("-o", "--output"), 
+      type = "character", 
+      help = "Path to output file"
+    ),
+    optparse::make_option(c("--verbose"), default = FALSE, action = "store_true")
+  )
+)
+
 
 
 parse_script_args <- function() {
@@ -198,8 +214,8 @@ parse_script_args <- function() {
     args <- commandArgs(trailingOnly = TRUE)
     subcommand <- args[1]
 
-    if (!subcommand %in% c("ifs", "peak", "signal")) {
-      stop("Subcommand should be one of the following: ifs, peak, hotspot, signal")
+    if (!subcommand %in% c("ifs", "peak", "signal", "chromsizes")) {
+      stop("Subcommand should be one of the following: ifs, peak, hotspot, signal, chromsizes")
     }
 
     if (is_true(subcommand == "ifs")) {
@@ -208,6 +224,8 @@ parse_script_args <- function() {
       parser <- peak_parser
     } else if (is_true(subcommand == "signal")) {
       parser <- signal_parser
+    } else if (is_true(subcommand == "chromsizes")) {
+      parser <- chromsizes_parser
     } else {
       stop("Subcommand should be one of the following: ifs, peak, hotspot, signal")
     }
@@ -259,12 +277,18 @@ parse_script_args <- function() {
       stop("window_size must be multiples of step_size")
     }
 
-    # genome must be one of GRCh37, GRCh38, hg19 and hg38
-    # internally it can only can be GRCh37 or GRCh38
+    if (is_null(script_args$genome)) {
+      stop("--genome is required")
+    }
+
+    # genome must be one of GRCh37, GRCh38, hg19, hg38, T2T, or hs1
+    # internally it can only can be GRCh37, GRCh38, or hs1
     if (script_args$genome %in% c("GRCh37", "hg19")) {
       script_args$genome <- "GRCh37"
     } else if (script_args$genome %in% c("GRCh38", "hg38")) {
       script_args$genome <- "GRCh38"
+    } else if (script_args$genome %in% c("T2T", "hs1")) {
+      script_args$genome <- "hs1"
     } else {
       stop(paste0("Unsupported genome: ", script_args$genome))
     }
@@ -301,7 +325,7 @@ write_ifs_as_bedgraph <- function(ifs, script_args, comments) {
   GenomicRanges::start(ifs) <- GenomicRanges::start(ifs) + offset
   GenomicRanges::width(ifs) <- script_args$step_size
 
-  # # Rearrage orders
+  # # Rearrange orders
   # df <- GenomicRanges::mcols(ifs) %>%
   #   as_tibble() %>%
   #   relocate(c(z_score, score), .after = end) %>% select(-gc, -mappability)
@@ -385,7 +409,9 @@ subcommand_ifs <- function(script_args) {
   # Make sure the genome is available
   bsgenome <- switch(script_args$genome,
     "GRCh37" = "BSgenome.Hsapiens.1000genomes.hs37d5",
+    "hs37-1kg" = "BSgenome.Hsapiens.1000genomes.hs37d5",
     "GRCh38" = "BSgenome.Hsapiens.NCBI.GRCh38",
+    "hs1" = "BSgenome.Hsapiens.NCBI.T2T.CHM13v2.0",
     stop(paste0("Invalid genome: ", script_args$genome))
   )
 
@@ -468,7 +494,8 @@ subcommand_signal <- function(script_args) {
     "GRCh37" = "BSgenome.Hsapiens.1000genomes.hs37d5",
     "hs37-1kg" = "BSgenome.Hsapiens.1000genomes.hs37d5",
     "GRCh38" = "BSgenome.Hsapiens.NCBI.GRCh38",
-    stop(paste0("Invalid genome: ", genome_name))
+    "hs1" = "BSgenome.Hsapiens.NCBI.T2T.CHM13v2.0",
+    stop(paste0("Invalid genome: ", script_args$genome))
   )
 
   assertthat::assert_that(requireNamespace(bsgenome), msg = str_interp("${bsgenome} is required"))
@@ -539,6 +566,45 @@ subcommand_signal <- function(script_args) {
   bedtorch::write_bed(ifs2, file_path = script_args$output, comments = comments)
 }
 
+
+subcommand_chromsizes <- function(script_args) {
+  # Get the appropriate BSgenome package name
+  bsgenome <- switch(script_args$genome,
+    "GRCh37" = "BSgenome.Hsapiens.1000genomes.hs37d5",
+    "hs37-1kg" = "BSgenome.Hsapiens.1000genomes.hs37d5",
+    "GRCh38" = "BSgenome.Hsapiens.NCBI.GRCh38",
+    "hs1" = "BSgenome.Hsapiens.NCBI.T2T.CHM13v2.0",
+    stop(paste0("Invalid genome: ", script_args$genome))
+  )
+  
+  # Check if the BSgenome package is available
+  assertthat::assert_that(
+    requireNamespace(bsgenome), 
+    msg = str_interp("${bsgenome} is required")
+  )
+  
+  # Get the genome object
+  genome <- GenomeInfoDb::Seqinfo(genome = script_args$genome)
+  
+  # Extract chromosome sizes
+  chrom_sizes <- GenomeInfoDb::seqlengths(genome)
+  
+  # Create a data frame
+  df <- data.frame(
+    chrom = names(chrom_sizes),
+    size = as.numeric(chrom_sizes)
+  )
+  
+  # Write to file
+  readr::write_tsv(
+    df, 
+    script_args$output, 
+    col_names = FALSE
+  )
+  
+  logging::loginfo(str_interp("Wrote chromosome sizes for ${script_args$genome} to ${script_args$output}"))
+}
+
 # Main ----
 parse_script_args_result <- parse_script_args()
 subcommand <- parse_script_args_result[[1]]
@@ -579,10 +645,10 @@ if (subcommand == "ifs") {
   subcommand_ifs(script_args)
 } else if (subcommand == "peak") {
   subcommand_peak(script_args)
-  # } else if (subcommand == "hotspot") {
-  #   subcommand_hotspot(script_args)
 } else if (subcommand == "signal") {
   subcommand_signal(script_args)
+} else if (subcommand == "chromsizes") {
+  subcommand_chromsizes(script_args)
 } else {
   stop("Invalid subcommand")
 }

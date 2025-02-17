@@ -28,7 +28,9 @@ cragr also requires BSgenome packages for the reference genome of interest, in o
 
 * For GRCh37: install [BSgenome.Hsapiens.1000genomes.hs37d5](https://bioconductor.org/packages/release/data/annotation/html/BSgenome.Hsapiens.1000genomes.hs37d5.html)
 * For GRCh38: install [BSgenome.Hsapiens.NCBI.GRCh38](https://bioconductor.org/packages/release/data/annotation/html/BSgenome.Hsapiens.NCBI.GRCh38.html)
-* Currently cragr only supports GRCh37 and GRCh38.
+* For T2T/hs1: install [BSgenome.Hsapiens.NCBI.T2T.CHM13v2.0](https://bioconductor.org/packages/release/data/annotation/html/BSgenome.Hsapiens.NCBI.T2T.CHM13v2.0.html)
+
+* Currently cragr only supports GRCh37, GRCh38, and T2T/hs1
 
 ## Getting started
 
@@ -89,7 +91,7 @@ In addition to the input fragment files, cragr needs several additional data fil
 The analysis consists of several stages:
 
 1. Read fragment data and calculate raw IFS scores (those without GC correction).
-2. Perform GC-correction if needed, and calcualte p-values and FDR values for each genomic interval based on negative binomial model.
+2. Perform GC-correction if needed, and calculate p-values and FDR values for each genomic interval based on negative binomial model.
 3. Call hotspots.
 4. (Optional) given a cfDNA fragment dataset, calculate IFS scores for certain genomic intervals (for example, the hotspots obtained from Stage 3).
 
@@ -97,6 +99,7 @@ The analysis consists of several stages:
 
 The following example perform stage 1 analysis for chromosome 14:
 
+```
     Rscript cragr.R ifs \
     -i frag.bed.gz \
     -o output.raw_ifs.chr14.bed.gz \
@@ -104,6 +107,7 @@ The following example perform stage 1 analysis for chromosome 14:
     --genome GRCh37 \
     --exclude-region encode.blacklist.hs37-1kg.bed \
     --chrom 14
+```
 
 It is recommended to calculate IFS scores chromosome by chromosome because this enables the most potential for parallelization. In this case, after all tasks are finished, concatenate the raw IFS tracks together.
 
@@ -111,29 +115,40 @@ It is recommended to calculate IFS scores chromosome by chromosome because this 
 
 The following example perform stage 2 analysis for chromosome 14:
 
+```
     Rscript cragr.R peak \
     -i output.raw_ifs.bed.gz \
     -o ifs.bedGraph.gz \
     --gc-correct \
     --genome GRCh37
-
+```
 The output file `ifs.bedGraph.gz` is the track of IFS scores. It can be visualized using standard genome browser such as IGV.
 
 #### Stage 3
 
 Finally, the hotspot regions can be called from IFS scores:
 
-    zcat ifs.bedGraph.gz |
-    awk -F'\t' -v OFS="\t" 'substr($1,1,1)!="#" && $17<=FDR_CUTOFF && $17!="."' |
+# Get chromosome sizes 
+```
+    Rscript cragr.R chromsizes \
+    --genome GRCh37 \
+    -o GRCh37.chrom_sizes
+```
+
+# Call hotspots
+```
+    zcat ifs.bedGraph.gz | grep -v '^#' | 
+    awk -F'\t' -v OFS="\t" -v fdr="$FDR_CUTOFF" '$17<=$fdr && $17!="."' |
     bedtools slop -g CHROM_SIZES -i - -b FLANK -header |
     bedtools merge -header -i - -d MERGE_GAP -c 17 -o min > hotspot.bed
+```
 
 Pay attention to these parameters:
 
-* `FDR_CUTOFF`: in the IFS track, if the FDR value of an interval is smaller than the cutoff, the interval will be considered belonging to a hotspot.
+* `FDR_CUTOFF`: in the IFS track, if the FDR value of an interval is smaller than the cutoff, the interval will be considered belonging to a hotspot. (e.g. 0.2)
 * `CHROM_SIZES`: path to the chromosome sizes file.
 * `FLANK`: in Stage 1 analysis, there are two important parameters: `--window-size` (200 by default) and `--step-size` (20 by default). `FLANK` must be `(WINDOW_SIZE - STEP_SIZE) / 2`. Therefore, by default, `FLANK = (200 - 20) / 2 = 90`.
-* `MERGE_GAP`: if the distance between two hotspot intervals are less than `MERGE_GAP`, they will be merged into one larger hotspot.
+* `MERGE_GAP`: if the distance between two hotspot intervals are less than `MERGE_GAP`, they will be merged into one larger hotspot. (e.g. 20)
 
 
 The output hotspot file contains fourth columns as shown below:
@@ -175,7 +190,7 @@ Options:
                 Path to the output file.
 
         --genome=GENOME
-                Which reference genome the input fragment file is based on. Should be either GRCh37 or GRCh38.
+                Which reference genome the input fragment file is based on. Should be either GRCh37, GRCh38, or hs1.
 
         -g, --gc-correct
                 Perform GC correction.
@@ -258,7 +273,7 @@ Options:
                 Path to output file
 
         --genome=GENOME
-                Reference genome to use. Should be either GRCh37 or GRCh38.
+                Reference genome to use. Should be either GRCh37, GRCh38, or hs1.
 
         -g, --gc-correct
                 Whether to perform GC correction.
