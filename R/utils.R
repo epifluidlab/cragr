@@ -78,7 +78,7 @@ set_style <- function(gr, style) {
   }
 
   original_genome <- original_seqinfo@genome[1]
-  assert_that(original_genome %in% c("GRCh37", "GRCh38", "hg19", "hg38"))
+  assert_that(original_genome %in% c("GRCh37", "GRCh38", "hg19", "hg38", "T2T-CHM13v2.0", "hs1"))
 
   # Remove existing genomes and then change style
   new_seqinfo <-
@@ -96,6 +96,10 @@ set_style <- function(gr, style) {
     new_genome <- "GRCh37"
   } else if (is_true(original_genome == "hg38")) {
     new_genome <- "GRCh38"
+  } else if (is_true(original_genome == "T2T-CHM13v2.0")) {
+    new_genome <- "hs1"
+  } else if (is_true(original_genome == "hs1")) {
+    new_genome <- "T2T-CHM13v2.0"
   } else {
     stop("Unknown genome: ", original_genome)
   }

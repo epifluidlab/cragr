@@ -13,7 +13,7 @@ ifs_parser <- optparse::OptionParser(
       help = "Path to the input fragment file. The file should be in bgzip-compressed BED format, alongside with the .tbi index file."
     ),
     optparse::make_option(c("-o", "--output"), type = "character", help = "Path to the output file."),
-    optparse::make_option(c("--genome"), type = "character", help = "Which reference genome the input fragment file is based on. Should be either GRCh37 or GRCh38."),
+    optparse::make_option(c("--genome"), type = "character", help = "Which reference genome the input fragment file is based on. Should be either GRCh37, GRCh38, or hs1."),
     optparse::make_option(
       c("-g", "--gc-correct"),
       default = FALSE,
@@ -265,6 +265,8 @@ parse_script_args <- function() {
       script_args$genome <- "GRCh37"
     } else if (script_args$genome %in% c("GRCh38", "hg38")) {
       script_args$genome <- "GRCh38"
+    } else if (script_args$genome %in% c("T2T", "hs1")) {
+      script_args$genome <- "hs1"
     } else {
       stop(paste0("Unsupported genome: ", script_args$genome))
     }
@@ -301,7 +303,7 @@ write_ifs_as_bedgraph <- function(ifs, script_args, comments) {
   GenomicRanges::start(ifs) <- GenomicRanges::start(ifs) + offset
   GenomicRanges::width(ifs) <- script_args$step_size
 
-  # # Rearrage orders
+  # # Rearrange orders
   # df <- GenomicRanges::mcols(ifs) %>%
   #   as_tibble() %>%
   #   relocate(c(z_score, score), .after = end) %>% select(-gc, -mappability)
@@ -385,7 +387,9 @@ subcommand_ifs <- function(script_args) {
   # Make sure the genome is available
   bsgenome <- switch(script_args$genome,
     "GRCh37" = "BSgenome.Hsapiens.1000genomes.hs37d5",
+    "hs37-1kg" = "BSgenome.Hsapiens.1000genomes.hs37d5",
     "GRCh38" = "BSgenome.Hsapiens.NCBI.GRCh38",
+    "hs1" = "BSgenome.Hsapiens.NCBI.T2T.CHM13v2.0",
     stop(paste0("Invalid genome: ", script_args$genome))
   )
 
@@ -468,7 +472,8 @@ subcommand_signal <- function(script_args) {
     "GRCh37" = "BSgenome.Hsapiens.1000genomes.hs37d5",
     "hs37-1kg" = "BSgenome.Hsapiens.1000genomes.hs37d5",
     "GRCh38" = "BSgenome.Hsapiens.NCBI.GRCh38",
-    stop(paste0("Invalid genome: ", genome_name))
+    "hs1" = "BSgenome.Hsapiens.NCBI.T2T.CHM13v2.0",
+    stop(paste0("Invalid genome: ", script_args$genome))
   )
 
   assertthat::assert_that(requireNamespace(bsgenome), msg = str_interp("${bsgenome} is required"))
